@@ -251,7 +251,7 @@ function calcVolumeAnalysis(bars, currentVolume) {
 // Auto-scaling confidence score
 // Takes all available context and computes a final adjusted confidence
 // with a full breakdown of every modifier applied
-function calcConfidenceScore({ aiBaseConfidence, vix, volumeAnalysis, mtf, sectorData, preMarket, futures, newsImpact, calendarWarning }) {
+function calcConfidenceScore({ aiBaseConfidence, vix, volumeAnalysis, mtf, sectorData, preMarket, futures, newsImpact, calendarWarning, optionsFlow }) {
   const base = Math.max(40, Math.min(95, aiBaseConfidence || 65));
   const modifiers = [];
 
@@ -309,6 +309,18 @@ function calcConfidenceScore({ aiBaseConfidence, vix, volumeAnalysis, mtf, secto
   if (newsImpact) {
     if      (newsImpact === 'CONFIRMING')    modifiers.push({ label: 'News confirms signal',    value: +8,  category: 'news' });
     else if (newsImpact === 'CONTRADICTING') modifiers.push({ label: 'News contradicts signal', value: -8,  category: 'news' });
+  }
+
+  // Options flow modifier
+  if (optionsFlow) {
+    if      (optionsFlow.flowBias === 'BEARISH'      && optionsFlow.unusualPuts?.length  > 0) modifiers.push({ label: 'Unusual put buying detected',  value: -12, category: 'options' });
+    else if (optionsFlow.flowBias === 'MILD_BEARISH' && optionsFlow.unusualPuts?.length  > 0) modifiers.push({ label: 'Elevated put buying',           value: -6,  category: 'options' });
+    else if (optionsFlow.flowBias === 'BULLISH'      && optionsFlow.unusualCalls?.length > 0) modifiers.push({ label: 'Unusual call buying detected', value: +12, category: 'options' });
+    else if (optionsFlow.flowBias === 'MILD_BULLISH' && optionsFlow.unusualCalls?.length > 0) modifiers.push({ label: 'Elevated call buying',          value: +6,  category: 'options' });
+
+    // High put/call ratio is a fear signal
+    if (optionsFlow.putCallRatio > 1.5) modifiers.push({ label: `High put/call ratio (${optionsFlow.putCallRatio})`, value: -8, category: 'options' });
+    else if (optionsFlow.putCallRatio < 0.7) modifiers.push({ label: `Low put/call ratio (${optionsFlow.putCallRatio})`, value: +8, category: 'options' });
   }
 
   // Calendar warning

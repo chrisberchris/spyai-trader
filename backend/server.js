@@ -12,6 +12,7 @@ const { generateSignal } = require('./aiAnalysis');
 const { runBacktest } = require('./backtest');
 const { getMarketNews, getEconomicCalendar, buildNewsContext } = require('./news');
 const { getSectorData, buildSectorContext } = require('./sectors');
+const { getOptionsFlow, buildOptionsFlowContext } = require('./optionsFlow');
 
 const app = express();
 app.use(cors({ origin: process.env.FRONTEND_URL || '*' }));
@@ -58,6 +59,16 @@ app.get('/api/market/prices', async (req, res) => {
        ORDER BY recorded_at DESC LIMIT $1`, [limit]
     );
     res.json(rows.reverse());
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/market/options-flow', async (req, res) => {
+  try {
+    const flow = await getOptionsFlow('SPY');
+    if (!flow) return res.status(503).json({ error: 'Options data unavailable' });
+    res.json(flow);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -111,7 +122,7 @@ app.get('/api/news/calendar', async (req, res) => {
 app.post('/api/signal/generate', async (req, res) => {
   try {
     // Fetch everything in parallel for speed
-    const [bars, hourlyBars, bars15m, quote, vix, newsData, calendar, preMarket, futures, sectorData] = await Promise.all([
+    const [bars, hourlyBars, bars15m, quote, vix, newsData, calendar, preMarket, futures, sectorData, optionsFlow] = await Promise.allSettled([
       getHistoricalBars('SPY', 220),
       getIntradayBars('SPY', 1, 'hour', 7),
       getIntradayBars('SPY', 15, 'minute', 3),
@@ -121,8 +132,9 @@ app.post('/api/signal/generate', async (req, res) => {
       getEconomicCalendar(),
       getPreMarketData(),
       getFuturesData(),
-      getSectorData()
-    ]);
+      getSectorData(),
+      getOptionsFlow('SPY')
+    ]).then(results => results.map(r => r.status === 'fulfilled' ? r.value : null));
 
     if (!bars.length) return res.status(503).json({ error: 'Cannot fetch market data' });
 
@@ -152,6 +164,9 @@ app.post('/api/signal/generate', async (req, res) => {
     // Build sector rotation context for AI
     const sectorContext = buildSectorContext(sectorData);
 
+    // Build options flow context for AI
+    const optionsFlowContext = buildOptionsFlowContext(optionsFlow);
+
     const signal = await generateSignal({
       price: quote?.price || indicators.price,
       indicators,
@@ -166,7 +181,9 @@ app.post('/api/signal/generate', async (req, res) => {
       preMarket,
       futures,
       sectorContext,
-      sectorData
+      sectorData,
+      optionsFlowContext,
+      optionsFlow
     });
 
     // Auto-scale confidence based on all available context
@@ -179,7 +196,8 @@ app.post('/api/signal/generate', async (req, res) => {
       preMarket,
       futures,
       newsImpact: signal.news_impact,
-      calendarWarning
+      calendarWarning,
+      optionsFlow
     });
 
     // Persist signal to DB
@@ -214,6 +232,7 @@ app.post('/api/signal/generate', async (req, res) => {
       volumeAnalysis,
       preMarket,
       futures,
+      optionsFlow,
       sectorData: {
         rotation: sectorData?.rotation,
         leaders:  sectorData?.leaders,

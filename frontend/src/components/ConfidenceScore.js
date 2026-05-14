@@ -14,6 +14,7 @@ const CATEGORY_COLORS = {
   premarket: '#06b6d4',
   news:      '#ec4899',
   calendar:  '#ef4444',
+  options:   '#a855f7',
 };
 
 const CATEGORY_LABELS = {
@@ -24,6 +25,7 @@ const CATEGORY_LABELS = {
   premarket: 'Pre-Market',
   news:      'News',
   calendar:  'Calendar',
+  options:   'Options Flow',
 };
 
 export default function ConfidenceScore({ confidenceScore, signal }) {

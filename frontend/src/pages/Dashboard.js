@@ -7,6 +7,7 @@ import VolumeConfirmation from '../components/VolumeConfirmation';
 import PreMarket from '../components/PreMarket';
 import SectorHeatmap from '../components/SectorHeatmap';
 import ConfidenceScore from '../components/ConfidenceScore';
+import OptionsFlow from '../components/OptionsFlow';
 
 export default function Dashboard({ snapshot }) {
   const [signal, setSignal] = useState(null);
@@ -190,6 +191,8 @@ export default function Dashboard({ snapshot }) {
               <div className="empty">Run analysis to see call/put recommendations.</div>
             )}
           </div>
+
+          <OptionsFlow signalOptionsFlow={signal?.optionsFlow} />
 
           <PreMarket signalPreMarket={signal?.preMarket} signalFutures={signal?.futures} />
 
