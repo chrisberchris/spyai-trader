@@ -31,7 +31,19 @@ export const news = {
 export const signals = {
   generate: () => api.post('/api/signal/generate').then(r => r.data),
   latest:   () => api.get('/api/signal/latest').then(r => r.data),
-  history:  (limit = 50) => api.get('/api/signal/history', { params: { limit } }).then(r => r.data),
+  history:  (limit = 100) => api.get('/api/signal/history', { params: { limit } }).then(r => r.data),
+  outcome:  (id, data) => api.patch(`/api/signal/${id}/outcome`, data).then(r => r.data),
+};
+
+export const personalTrades = {
+  list:   () => api.get('/api/personal-trades').then(r => r.data),
+  create: (data) => api.post('/api/personal-trades', data).then(r => r.data),
+  close:  (id, data) => api.patch(`/api/personal-trades/${id}/close`, data).then(r => r.data),
+};
+
+export const analytics = {
+  summary: () => api.get('/api/analytics/summary').then(r => r.data),
+  export:  () => api.get('/api/analytics/export').then(r => r.data),
 };
 
 export const trades = {

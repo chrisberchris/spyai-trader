@@ -204,11 +204,21 @@ app.post('/api/signal/generate', requireAuth, async (req, res) => {
     // Persist signal to DB
     const { rows } = await db.query(
       `INSERT INTO signals (symbol, signal, confidence, entry_price, target_price, stop_loss,
-        reasoning, rsi, macd, vix, raw_response, user_id)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING id`,
+        reasoning, rsi, macd, vix, raw_response, user_id,
+        timeframe_agreement, volume_label, rotation_signal,
+        flow_bias, put_call_ratio, futures_bias, gap_type, news_impact)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20) RETURNING id`,
       ['SPY', signal.signal, confidenceScore.adjusted, signal.entry_price, signal.target_price,
        signal.stop_loss, signal.reasoning, indicators.rsi, indicators.macd, vix,
-       JSON.stringify(signal), req.userId]
+       JSON.stringify(signal), req.userId,
+       mtf?.agreement || null,
+       volumeAnalysis?.label || null,
+       sectorData?.rotation?.signal || null,
+       optionsFlow?.flowBias || null,
+       optionsFlow?.putCallRatio || null,
+       futures?.bias || null,
+       preMarket?.gapType || null,
+       signal.news_impact || null]
     );
 
     const signalId = rows[0].id;
@@ -263,14 +273,16 @@ app.post('/api/signal/generate', requireAuth, async (req, res) => {
   }
 });
 
-app.get('/api/signal/latest', async (req, res) => {
+app.get('/api/signal/latest', requireAuth, async (req, res) => {
   try {
     const { rows } = await db.query(
       `SELECT s.*, json_agg(o.*) FILTER (WHERE o.id IS NOT NULL) as options
        FROM signals s
        LEFT JOIN options_recommendations o ON o.signal_id = s.id
+       WHERE s.user_id = $1
        ORDER BY s.created_at DESC LIMIT 1
-       GROUP BY s.id`
+       GROUP BY s.id`,
+      [req.userId]
     );
     res.json(rows[0] || null);
   } catch (err) {
@@ -278,15 +290,175 @@ app.get('/api/signal/latest', async (req, res) => {
   }
 });
 
-app.get('/api/signal/history', async (req, res) => {
+app.get('/api/signal/history', requireAuth, async (req, res) => {
   try {
-    const limit = parseInt(req.query.limit) || 50;
+    const limit = parseInt(req.query.limit) || 100;
     const { rows } = await db.query(
       `SELECT id, signal, confidence, entry_price, target_price, stop_loss,
-              reasoning, rsi, macd, vix, created_at
-       FROM signals ORDER BY created_at DESC LIMIT $1`, [limit]
+              reasoning, rsi, macd, vix, created_at,
+              outcome, outcome_price, outcome_pnl_pct,
+              timeframe_agreement, volume_label, rotation_signal,
+              flow_bias, put_call_ratio, futures_bias, news_impact
+       FROM signals
+       WHERE user_id = $1
+       ORDER BY created_at DESC LIMIT $2`,
+      [req.userId, limit]
     );
     res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Update signal outcome when price hits target or stop
+app.patch('/api/signal/:id/outcome', requireAuth, async (req, res) => {
+  try {
+    const { outcome, outcome_price } = req.body;
+    const { rows: [sig] } = await db.query(
+      'SELECT * FROM signals WHERE id=$1 AND user_id=$2',
+      [req.params.id, req.userId]
+    );
+    if (!sig) return res.status(404).json({ error: 'Signal not found' });
+    const pnlPct = sig.entry_price && outcome_price
+      ? parseFloat(((outcome_price - sig.entry_price) / sig.entry_price * 100).toFixed(4))
+      : null;
+    const { rows } = await db.query(
+      `UPDATE signals SET outcome=$1, outcome_price=$2, outcome_pnl_pct=$3, outcome_checked_at=NOW()
+       WHERE id=$4 AND user_id=$5 RETURNING *`,
+      [outcome, outcome_price, pnlPct, req.params.id, req.userId]
+    );
+    res.json(rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── Personal Trades ──────────────────────────────────────────────────────────
+app.get('/api/personal-trades', requireAuth, async (req, res) => {
+  try {
+    const { rows } = await db.query(
+      `SELECT pt.*, s.signal AS ai_signal, s.confidence AS ai_confidence,
+              s.rsi, s.macd, s.vix, s.timeframe_agreement,
+              s.rotation_signal, s.flow_bias, s.news_impact
+       FROM personal_trades pt
+       LEFT JOIN signals s ON s.id = pt.signal_id
+       WHERE pt.user_id = $1
+       ORDER BY pt.opened_at DESC LIMIT 200`,
+      [req.userId]
+    );
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/personal-trades', requireAuth, async (req, res) => {
+  try {
+    const {
+      signal_id, side, trade_type = 'STOCK', quantity = 1,
+      entry_price, target_price, stop_loss,
+      followed_signal = true, deviation_notes, emotion_rating, notes
+    } = req.body;
+    const { rows } = await db.query(
+      `INSERT INTO personal_trades
+        (user_id, signal_id, side, trade_type, quantity, entry_price,
+         target_price, stop_loss, followed_signal, deviation_notes, emotion_rating, notes)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`,
+      [req.userId, signal_id, side, trade_type, quantity, entry_price,
+       target_price, stop_loss, followed_signal, deviation_notes, emotion_rating, notes]
+    );
+    res.json(rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.patch('/api/personal-trades/:id/close', requireAuth, async (req, res) => {
+  try {
+    const { exit_price, notes, emotion_rating } = req.body;
+    const { rows: [trade] } = await db.query(
+      'SELECT * FROM personal_trades WHERE id=$1 AND user_id=$2',
+      [req.params.id, req.userId]
+    );
+    if (!trade) return res.status(404).json({ error: 'Trade not found' });
+    const pnl    = (exit_price - trade.entry_price) * trade.quantity * (trade.side === 'BUY' ? 1 : -1);
+    const pnlPct = (exit_price - trade.entry_price) / trade.entry_price * 100;
+    const { rows } = await db.query(
+      `UPDATE personal_trades SET exit_price=$1, pnl=$2, pnl_pct=$3,
+        status='CLOSED', closed_at=NOW(),
+        notes=COALESCE($4, notes), emotion_rating=COALESCE($5, emotion_rating)
+       WHERE id=$6 AND user_id=$7 RETURNING *`,
+      [exit_price, pnl.toFixed(4), pnlPct.toFixed(4),
+       notes, emotion_rating, req.params.id, req.userId]
+    );
+    res.json(rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── Analytics ───────────────────────────────────────────────────────────────
+app.get('/api/analytics/summary', requireAuth, async (req, res) => {
+  try {
+    const [signalAcc, tradePerfRows, signalHistory, tradeHistory] = await Promise.all([
+      db.query('SELECT * FROM signal_accuracy WHERE user_id=$1', [req.userId]),
+      db.query('SELECT * FROM personal_trade_performance WHERE user_id=$1', [req.userId]),
+      db.query(
+        `SELECT signal, confidence, outcome, outcome_pnl_pct,
+                timeframe_agreement, rotation_signal, flow_bias,
+                volume_label, news_impact, vix, rsi, created_at
+         FROM signals WHERE user_id=$1 AND outcome IS NOT NULL
+         ORDER BY created_at DESC LIMIT 100`,
+        [req.userId]
+      ),
+      db.query(
+        `SELECT side, trade_type, pnl, pnl_pct, followed_signal,
+                emotion_rating, opened_at, closed_at
+         FROM personal_trades WHERE user_id=$1 AND status='CLOSED'
+         ORDER BY opened_at DESC LIMIT 100`,
+        [req.userId]
+      )
+    ]);
+    res.json({
+      signalAccuracy:   signalAcc.rows[0] || null,
+      tradePerformance: tradePerfRows.rows[0] || null,
+      signalHistory:    signalHistory.rows,
+      tradeHistory:     tradeHistory.rows
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Export all data as JSON for Excel generation
+app.get('/api/analytics/export', requireAuth, async (req, res) => {
+  try {
+    const [signals, personalTrades] = await Promise.all([
+      db.query(
+        `SELECT id, signal, confidence, entry_price, target_price, stop_loss,
+                reasoning, rsi, macd, vix, created_at,
+                outcome, outcome_price, outcome_pnl_pct,
+                timeframe_agreement, volume_label, rotation_signal,
+                flow_bias, put_call_ratio, futures_bias, news_impact
+         FROM signals WHERE user_id=$1 ORDER BY created_at DESC`,
+        [req.userId]
+      ),
+      db.query(
+        `SELECT pt.*, s.signal AS ai_signal, s.confidence AS ai_confidence,
+                s.entry_price AS ai_entry, s.target_price AS ai_target,
+                s.stop_loss AS ai_stop, s.rsi, s.macd, s.vix,
+                s.timeframe_agreement, s.rotation_signal, s.flow_bias, s.news_impact
+         FROM personal_trades pt
+         LEFT JOIN signals s ON s.id = pt.signal_id
+         WHERE pt.user_id=$1 ORDER BY pt.opened_at DESC`,
+        [req.userId]
+      )
+    ]);
+    res.json({
+      signals:        signals.rows,
+      personalTrades: personalTrades.rows,
+      exportedAt:     new Date().toISOString()
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

@@ -4,6 +4,7 @@ import LiveFeed from './pages/LiveFeed';
 import TradeLog from './pages/TradeLog';
 import Backtest from './pages/Backtest';
 import AuthPage from './pages/AuthPage';
+import Analytics from './pages/Analytics';
 import NewsSentiment from './components/NewsSentiment';
 import SectorHeatmap from './components/SectorHeatmap';
 import OptionsFlow from './components/OptionsFlow';
@@ -12,13 +13,14 @@ import { auth } from './lib/supabase';
 import './App.css';
 
 const TABS = [
-  { id: 'dashboard', label: 'Signal',   icon: '◈' },
-  { id: 'options',   label: 'Options',  icon: '◉' },
-  { id: 'news',      label: 'News',     icon: '◎' },
-  { id: 'sectors',   label: 'Sectors',  icon: '⬡' },
-  { id: 'feed',      label: 'Feed',     icon: '≋' },
-  { id: 'trades',    label: 'Trades',   icon: '≡' },
-  { id: 'backtest',  label: 'Backtest', icon: '▦' },
+  { id: 'dashboard', label: 'Signal',    icon: '◈' },
+  { id: 'analytics', label: 'Analytics', icon: '◐' },
+  { id: 'options',   label: 'Options',   icon: '◉' },
+  { id: 'news',      label: 'News',      icon: '◎' },
+  { id: 'sectors',   label: 'Sectors',   icon: '⬡' },
+  { id: 'feed',      label: 'Feed',      icon: '≋' },
+  { id: 'trades',    label: 'Trades',    icon: '≡' },
+  { id: 'backtest',  label: 'Backtest',  icon: '▦' },
 ];
 
 export default function App() {
@@ -183,6 +185,7 @@ export default function App() {
           </div>
         )}
         {tab === 'dashboard' && <Dashboard snapshot={snapshot} />}
+        {tab === 'analytics' && <Analytics />}
         {tab === 'options'   && <div style={{ maxWidth: 800 }}><OptionsFlow /></div>}
         {tab === 'news'      && <div style={{ maxWidth: 800 }}><NewsSentiment /></div>}
         {tab === 'sectors'   && <div style={{ maxWidth: 800 }}><SectorHeatmap /></div>}

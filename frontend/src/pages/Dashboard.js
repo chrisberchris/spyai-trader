@@ -8,6 +8,7 @@ import PreMarket from '../components/PreMarket';
 import SectorHeatmap from '../components/SectorHeatmap';
 import ConfidenceScore from '../components/ConfidenceScore';
 import OptionsFlow from '../components/OptionsFlow';
+import TookThisTrade from '../components/TookThisTrade';
 
 export default function Dashboard({ snapshot }) {
   const [signal, setSignal] = useState(null);
@@ -172,6 +173,8 @@ export default function Dashboard({ snapshot }) {
           <button className="btn btn-full btn-green" onClick={runAnalysis} disabled={analyzing}>
             {analyzing ? 'Analyzing...' : '🧠 Run AI Analysis ↗'}
           </button>
+
+          <TookThisTrade signal={signal} onLogged={() => {}} />
         </div>
 
         <div className="stack">
