@@ -7,6 +7,7 @@ const { getSpySnapshot, getVix, getHistoricalBars } = require('./marketData');
 const { calcAllIndicators } = require('./indicators');
 const { generateSignal } = require('./aiAnalysis');
 const { runBacktest } = require('./backtest');
+const { getMarketNews, getEconomicCalendar, buildNewsContext } = require('./news');
 
 const app = express();
 app.use(cors({ origin: process.env.FRONTEND_URL || '*' }));
@@ -58,20 +59,65 @@ app.get('/api/market/prices', async (req, res) => {
   }
 });
 
+// ─── News & Calendar ─────────────────────────────────────────────────────────
+app.get('/api/news', async (req, res) => {
+  try {
+    const [newsData, calendar] = await Promise.all([
+      getMarketNews(),
+      getEconomicCalendar()
+    ]);
+    res.json({ ...newsData, calendar });
+  } catch (err) {
+    console.error('News error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/news/calendar', async (req, res) => {
+  try {
+    const calendar = await getEconomicCalendar();
+    res.json(calendar);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ─── AI Signal ───────────────────────────────────────────────────────────────
 app.post('/api/signal/generate', async (req, res) => {
   try {
-    const bars = await getHistoricalBars('SPY', 220);
+    // Fetch everything in parallel for speed
+    const [bars, quote, vix, newsData, calendar] = await Promise.all([
+      getHistoricalBars('SPY', 220),
+      getSpySnapshot(),
+      getVix(),
+      getMarketNews(),
+      getEconomicCalendar()
+    ]);
+
     if (!bars.length) return res.status(503).json({ error: 'Cannot fetch market data' });
 
-    const [quote, vix] = await Promise.all([getSpySnapshot(), getVix()]);
     const indicators = calcAllIndicators(bars);
+
+    // Build news context string for AI prompt
+    const newsContext = buildNewsContext({
+      articles: newsData.articles,
+      overall: newsData.overall,
+      calendarEvents: calendar.events
+    });
+
+    // Build calendar warning string if high-impact event approaching
+    const calendarWarning = calendar.hasHighImpact
+      ? calendar.events.map(e => e.event).join(', ')
+      : null;
+
     const signal = await generateSignal({
       price: quote?.price || indicators.price,
       indicators,
       vix,
       volume: quote?.volume,
-      avgVolume: 80000000
+      avgVolume: 80000000,
+      newsContext,
+      calendarWarning
     });
 
     // Persist signal to DB
@@ -97,7 +143,19 @@ app.post('/api/signal/generate', async (req, res) => {
       }
     }
 
-    res.json({ signalId, ...signal, indicators });
+    res.json({
+      signalId,
+      ...signal,
+      indicators,
+      newsData: {
+        overall: newsData.overall,
+        articles: newsData.articles?.slice(0, 8),
+        calendar: calendar.events,
+        hasCalendarWarning: calendar.hasHighImpact,
+        source: newsData.source,
+        fetchedAt: newsData.fetchedAt
+      }
+    });
   } catch (err) {
     console.error('Signal error:', err.message);
     res.status(500).json({ error: err.message });

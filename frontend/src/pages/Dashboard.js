@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
 import { signals, market } from '../lib/api';
+import NewsSentiment from '../components/NewsSentiment';
 
 export default function Dashboard({ snapshot }) {
   const [signal, setSignal] = useState(null);
@@ -179,22 +180,7 @@ export default function Dashboard({ snapshot }) {
             )}
           </div>
 
-          <div className="card">
-            <div className="card-title">Market Sentiment</div>
-            {signal?.sentiment?.length ? (
-              signal.sentiment.map((s, i) => (
-                <div className="news-item" key={i}>
-                  <div className={`news-sent ${s.sentiment === 'BULLISH' ? 'up' : s.sentiment === 'BEARISH' ? 'down' : 'neu'}`}>
-                    {s.sentiment === 'BULLISH' ? '▲' : s.sentiment === 'BEARISH' ? '▼' : '●'} {s.sentiment}
-                  </div>
-                  <div className="news-head">{s.headline}</div>
-                  <div className="news-imp">{s.impact}</div>
-                </div>
-              ))
-            ) : (
-              <div className="empty">Sentiment appears after AI analysis.</div>
-            )}
-          </div>
+          <NewsSentiment signalNewsData={signal?.newsData ? { ...signal.newsData, news_impact: signal.news_impact, news_summary: signal.news_summary } : null} />
         </div>
       </div>
     </div>

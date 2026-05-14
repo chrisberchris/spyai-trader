@@ -10,6 +10,11 @@ export const market = {
   prices: (limit = 200) => api.get('/api/market/prices', { params: { limit } }).then(r => r.data),
 };
 
+export const news = {
+  feed: () => api.get('/api/news').then(r => r.data),
+  calendar: () => api.get('/api/news/calendar').then(r => r.data),
+};
+
 export const signals = {
   generate: () => api.post('/api/signal/generate').then(r => r.data),
   latest: () => api.get('/api/signal/latest').then(r => r.data),
