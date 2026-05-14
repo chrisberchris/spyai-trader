@@ -6,6 +6,7 @@ import MultiTimeframe from '../components/MultiTimeframe';
 import VolumeConfirmation from '../components/VolumeConfirmation';
 import PreMarket from '../components/PreMarket';
 import SectorHeatmap from '../components/SectorHeatmap';
+import ConfidenceScore from '../components/ConfidenceScore';
 
 export default function Dashboard({ snapshot }) {
   const [signal, setSignal] = useState(null);
@@ -159,6 +160,8 @@ export default function Dashboard({ snapshot }) {
               </div>
             </div>
           )}
+
+          <ConfidenceScore confidenceScore={signal?.confidenceScore} signal={signal?.signal} />
 
           <MultiTimeframe mtf={signal?.mtf} />
 

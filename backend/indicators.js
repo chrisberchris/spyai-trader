@@ -248,7 +248,98 @@ function calcVolumeAnalysis(bars, currentVolume) {
   };
 }
 
+// Auto-scaling confidence score
+// Takes all available context and computes a final adjusted confidence
+// with a full breakdown of every modifier applied
+function calcConfidenceScore({ aiBaseConfidence, vix, volumeAnalysis, mtf, sectorData, preMarket, futures, newsImpact, calendarWarning }) {
+  const base = Math.max(40, Math.min(95, aiBaseConfidence || 65));
+  const modifiers = [];
+
+  // VIX modifier
+  if (vix !== null && vix !== undefined) {
+    if      (vix > 35) { modifiers.push({ label: 'VIX extreme (>35)',   value: -15, category: 'risk' }); }
+    else if (vix > 25) { modifiers.push({ label: 'VIX elevated (>25)',  value: -10, category: 'risk' }); }
+    else if (vix > 20) { modifiers.push({ label: 'VIX moderate (>20)',  value: -5,  category: 'risk' }); }
+    else if (vix < 14) { modifiers.push({ label: 'VIX low (<14)',       value: +5,  category: 'risk' }); }
+  }
+
+  // Volume modifier
+  if (volumeAnalysis) {
+    if      (volumeAnalysis.label === 'VERY_HIGH') modifiers.push({ label: 'Volume very high',  value: +10, category: 'volume' });
+    else if (volumeAnalysis.label === 'HIGH')      modifiers.push({ label: 'Volume high',       value: +5,  category: 'volume' });
+    else if (volumeAnalysis.label === 'LOW')       modifiers.push({ label: 'Volume low',        value: -8,  category: 'volume' });
+    else if (volumeAnalysis.label === 'VERY_LOW')  modifiers.push({ label: 'Volume very low',   value: -15, category: 'volume' });
+  }
+
+  // Multi-timeframe modifier
+  if (mtf) {
+    if      (mtf.agreement === 'FULL_BULL' || mtf.agreement === 'FULL_BEAR')     modifiers.push({ label: 'Full MTF agreement',   value: +15, category: 'mtf' });
+    else if (mtf.agreement === 'MOSTLY_BULL' || mtf.agreement === 'MOSTLY_BEAR') modifiers.push({ label: 'Partial MTF agreement', value: +5,  category: 'mtf' });
+    else if (mtf.agreement === 'MIXED')                                           modifiers.push({ label: 'Mixed MTF signals',    value: -10, category: 'mtf' });
+  }
+
+  // Sector rotation modifier
+  if (sectorData?.rotation) {
+    const r = sectorData.rotation;
+    if      (r.signal === 'RISK_ON')       modifiers.push({ label: 'Sector rotation: Risk-On',       value: +10, category: 'sectors' });
+    else if (r.signal === 'MILD_RISK_ON')  modifiers.push({ label: 'Sector rotation: Mild Risk-On',  value: +5,  category: 'sectors' });
+    else if (r.signal === 'MILD_RISK_OFF') modifiers.push({ label: 'Sector rotation: Mild Risk-Off', value: -5,  category: 'sectors' });
+    else if (r.signal === 'RISK_OFF')      modifiers.push({ label: 'Sector rotation: Risk-Off',      value: -10, category: 'sectors' });
+
+    // Breadth modifier
+    if      (r.breadthPct >= 80) modifiers.push({ label: 'Broad market breadth (>80%)', value: +5,  category: 'sectors' });
+    else if (r.breadthPct <= 20) modifiers.push({ label: 'Narrow market breadth (<20%)', value: -5, category: 'sectors' });
+  }
+
+  // Gap modifier
+  if (preMarket?.gapType) {
+    if      (preMarket.gapType === 'GAP_UP_LARGE' || preMarket.gapType === 'GAP_DOWN_LARGE')
+      modifiers.push({ label: `Large gap (${preMarket.gapPct}%)`, value: -10, category: 'premarket' });
+    else if (preMarket.gapType === 'GAP_UP' || preMarket.gapType === 'GAP_DOWN')
+      modifiers.push({ label: `Gap (${preMarket.gapPct}%)`,       value: -5,  category: 'premarket' });
+  }
+
+  // Futures alignment
+  if (futures?.bias) {
+    if      (futures.bias === 'BULLISH') modifiers.push({ label: 'Futures bullish',  value: +5,  category: 'premarket' });
+    else if (futures.bias === 'BEARISH') modifiers.push({ label: 'Futures bearish',  value: -5,  category: 'premarket' });
+  }
+
+  // News modifier
+  if (newsImpact) {
+    if      (newsImpact === 'CONFIRMING')    modifiers.push({ label: 'News confirms signal',    value: +8,  category: 'news' });
+    else if (newsImpact === 'CONTRADICTING') modifiers.push({ label: 'News contradicts signal', value: -8,  category: 'news' });
+  }
+
+  // Calendar warning
+  if (calendarWarning) {
+    modifiers.push({ label: 'High-impact event within 48h', value: -10, category: 'calendar' });
+  }
+
+  // Apply all modifiers
+  const totalModifier = modifiers.reduce((sum, m) => sum + m.value, 0);
+  const adjusted = Math.max(40, Math.min(95, base + totalModifier));
+
+  // Position size recommendation based on final confidence
+  let positionSize;
+  if      (adjusted >= 85) positionSize = 'FULL';     // 100% of planned position
+  else if (adjusted >= 75) positionSize = 'STANDARD'; // 75%
+  else if (adjusted >= 65) positionSize = 'REDUCED';  // 50%
+  else if (adjusted >= 55) positionSize = 'SMALL';    // 25%
+  else                     positionSize = 'AVOID';    // skip trade
+
+  return {
+    base,
+    adjusted,
+    totalModifier,
+    modifiers,
+    positionSize,
+    positionSizePct: positionSize === 'FULL' ? 100 : positionSize === 'STANDARD' ? 75 : positionSize === 'REDUCED' ? 50 : positionSize === 'SMALL' ? 25 : 0,
+  };
+}
+
 module.exports = {
   calcRSI, calcEMA, calcSMA, calcMACD, calcBollingerBands, calcATR,
-  calcAllIndicators, calcTimeframeIndicators, calcMultiTimeframe, calcVolumeAnalysis
+  calcAllIndicators, calcTimeframeIndicators, calcMultiTimeframe,
+  calcVolumeAnalysis, calcConfidenceScore
 };

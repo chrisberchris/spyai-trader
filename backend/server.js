@@ -7,7 +7,7 @@ const {
   getSpySnapshot, getVix, getHistoricalBars,
   getIntradayBars, getPreMarketData, getFuturesData, buildPreMarketContext
 } = require('./marketData');
-const { calcAllIndicators, calcMultiTimeframe, calcVolumeAnalysis } = require('./indicators');
+const { calcAllIndicators, calcMultiTimeframe, calcVolumeAnalysis, calcConfidenceScore } = require('./indicators');
 const { generateSignal } = require('./aiAnalysis');
 const { runBacktest } = require('./backtest');
 const { getMarketNews, getEconomicCalendar, buildNewsContext } = require('./news');
@@ -169,6 +169,19 @@ app.post('/api/signal/generate', async (req, res) => {
       sectorData
     });
 
+    // Auto-scale confidence based on all available context
+    const confidenceScore = calcConfidenceScore({
+      aiBaseConfidence: signal.confidence,
+      vix,
+      volumeAnalysis,
+      mtf,
+      sectorData,
+      preMarket,
+      futures,
+      newsImpact: signal.news_impact,
+      calendarWarning
+    });
+
     // Persist signal to DB
     const { rows } = await db.query(
       `INSERT INTO signals (symbol, signal, confidence, entry_price, target_price, stop_loss,
@@ -195,6 +208,8 @@ app.post('/api/signal/generate', async (req, res) => {
     res.json({
       signalId,
       ...signal,
+      confidence: confidenceScore.adjusted,  // override AI confidence with auto-scaled value
+      confidenceScore,
       indicators,
       volumeAnalysis,
       preMarket,
