@@ -129,3 +129,119 @@ body { background: var(--bg); color: var(--text); font-family: var(--font); font
 /* Two-col layout */
 .two-col { display: grid; grid-template-columns: 1fr 280px; gap: 12px; margin-bottom: 12px; }
 .stack { display: flex; flex-direction: column; gap: 12px; }
+
+/* ─── PWA & Mobile Responsive ─────────────────────────────────────────────── */
+
+/* Safe area insets for iPhone notch/home bar */
+.app {
+  padding-bottom: env(safe-area-inset-bottom);
+}
+.header {
+  padding-top: calc(14px + env(safe-area-inset-top));
+}
+
+/* Mobile bottom nav bar — replaces top tabs on small screens */
+.mobile-nav {
+  display: none;
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  background: var(--bg2);
+  border-top: 0.5px solid var(--border);
+  padding: 8px 0 calc(8px + env(safe-area-inset-bottom));
+  z-index: 100;
+  grid-template-columns: repeat(7, 1fr);
+}
+.mobile-nav-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 4px 2px;
+  color: var(--text2);
+  font-family: var(--font);
+  transition: color .15s;
+}
+.mobile-nav-btn.active { color: var(--green); }
+.mobile-nav-icon { font-size: 16px; line-height: 1; }
+.mobile-nav-label { font-size: 9px; font-weight: 500; white-space: nowrap; }
+
+@media (max-width: 768px) {
+  /* Show mobile nav, hide desktop tabs */
+  .tabs { display: none; }
+  .mobile-nav { display: grid; }
+
+  /* Add bottom padding so content isn't hidden behind nav */
+  .main { padding: 12px 12px 80px; }
+
+  /* Header — compact on mobile */
+  .header { padding: 10px 14px; padding-top: calc(10px + env(safe-area-inset-top)); }
+  .header-center { display: none; } /* hide price bar in header on mobile */
+  .logo { font-size: 17px; }
+  .logo-sub { display: none; }
+
+  /* Show price prominently in main content on mobile instead */
+  .mobile-price-bar {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    padding: 10px 0 4px;
+    margin-bottom: 10px;
+    border-bottom: 0.5px solid var(--border);
+  }
+
+  /* Metrics grid — 2 cols on mobile */
+  .metrics { grid-template-columns: repeat(2, 1fr); gap: 8px; }
+
+  /* Two-col layout — single col on mobile */
+  .two-col { grid-template-columns: 1fr; }
+
+  /* Cards — tighter padding */
+  .card { padding: 12px 14px; }
+
+  /* Indicators — 3 col still fine */
+  .ind-grid { grid-template-columns: repeat(3, 1fr); gap: 6px; }
+
+  /* Tables — allow horizontal scroll */
+  .tbl-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+
+  /* Footer — hide on mobile (nav replaces it) */
+  .footer { display: none; }
+
+  /* Sign out button text — hide on mobile */
+  .signout-label { display: none; }
+
+  /* Auth page — full screen comfortable */
+  .auth-card { margin: 0 8px; }
+}
+
+@media (max-width: 480px) {
+  /* Extra small — reduce further */
+  .metrics { gap: 6px; }
+  .metric-value { font-size: 18px; }
+  .card { padding: 10px 12px; }
+  .main { padding: 10px 10px 80px; }
+}
+
+/* Smooth scrolling on iOS */
+.main { -webkit-overflow-scrolling: touch; }
+
+/* Prevent text size adjustment on orientation change */
+html { -webkit-text-size-adjust: 100%; }
+
+/* Tap highlight */
+* { -webkit-tap-highlight-color: transparent; }
+
+/* Scrollbar — thinner on mobile */
+::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 2px; }
+
+/* Mobile price bar — only show on small screens */
+@media (max-width: 768px) {
+  .mobile-price-bar { display: flex !important; }
+}
