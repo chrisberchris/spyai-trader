@@ -9,6 +9,7 @@ export const market = {
   history:   (days = 90) => api.get('/api/market/history', { params: { days } }).then(r => r.data),
   prices:    (limit = 200) => api.get('/api/market/prices', { params: { limit } }).then(r => r.data),
   premarket: () => api.get('/api/market/premarket').then(r => r.data),
+  sectors:   () => api.get('/api/market/sectors').then(r => r.data),
 };
 
 export const news = {

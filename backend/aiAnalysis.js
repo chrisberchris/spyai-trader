@@ -5,7 +5,8 @@ const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 async function generateSignal({
   price, indicators, vix, volume, avgVolume,
   newsContext, calendarWarning, mtf, volumeAnalysis,
-  preMarketContext, preMarket, futures
+  preMarketContext, preMarket, futures,
+  sectorContext, sectorData
 }) {
   const calendarAlert = calendarWarning
     ? `\n⚠ HIGH-IMPACT EVENT IN NEXT 48H: ${calendarWarning}. Reduce confidence accordingly.`
@@ -13,48 +14,35 @@ async function generateSignal({
 
   const volumeSection = volumeAnalysis ? `
 ═══ VOLUME CONFIRMATION ═══
-Current volume:    ${volumeAnalysis.current?.toLocaleString() ?? 'N/A'}
-20-day avg volume: ${volumeAnalysis.avg20?.toLocaleString() ?? 'N/A'}
-Volume vs avg:     ${volumeAnalysis.pct ?? 'N/A'}% (${volumeAnalysis.label?.replace('_', ' ') ?? 'N/A'})
-Tradeable:         ${volumeAnalysis.tradeable ? 'YES' : 'NO — low volume'}
+Volume vs 20-day avg: ${volumeAnalysis.pct ?? 'N/A'}% (${volumeAnalysis.label?.replace('_', ' ') ?? 'N/A'})
+Tradeable: ${volumeAnalysis.tradeable ? 'YES' : 'NO — low volume'}
 Confidence modifier: ${volumeAnalysis.confidenceModifier > 0 ? '+' : ''}${volumeAnalysis.confidenceModifier} points
-${volumeAnalysis.warning ? `⚠ ${volumeAnalysis.warning}` : ''}
-` : '';
+${volumeAnalysis.warning ? `⚠ ${volumeAnalysis.warning}` : ''}` : '';
 
   const mtfSection = mtf ? `
 ═══ MULTI-TIMEFRAME ANALYSIS ═══
-${mtf.summary}
-Agreement: ${mtf.agreement.replace('_', ' ')} | Confidence modifier: ${mtf.confidenceModifier > 0 ? '+' : ''}${mtf.confidenceModifier} points
+Agreement: ${mtf.agreement.replace('_', ' ')} | Modifier: ${mtf.confidenceModifier > 0 ? '+' : ''}${mtf.confidenceModifier} pts
 Daily  — ${mtf.daily.bias  || 'N/A'} | RSI: ${mtf.daily.rsi  || 'N/A'} | MACD: ${mtf.daily.macd  || 'N/A'}
 Hourly — ${mtf.hourly.bias || 'N/A'} | RSI: ${mtf.hourly.rsi || 'N/A'} | MACD: ${mtf.hourly.macd || 'N/A'}
-15-min — ${mtf.m15.bias    || 'N/A'} | RSI: ${mtf.m15.rsi    || 'N/A'} | MACD: ${mtf.m15.macd    || 'N/A'}
-` : '';
+15-min — ${mtf.m15.bias    || 'N/A'} | RSI: ${mtf.m15.rsi    || 'N/A'} | MACD: ${mtf.m15.macd    || 'N/A'}` : '';
 
   const preMarketSection = preMarketContext ? `
 ═══ PRE-MARKET & FUTURES ═══
-${preMarketContext}
-` : '';
+${preMarketContext}` : '';
 
-  // Gap confidence modifier
-  let gapModifier = 0;
+  const sectorSection = sectorContext ? `
+═══ SECTOR ROTATION ═══
+${sectorContext}` : '';
+
+  // Gap modifier
   let gapWarning = '';
-  if (preMarket?.gapType) {
-    if (preMarket.gapType === 'GAP_UP_LARGE' || preMarket.gapType === 'GAP_DOWN_LARGE') {
-      gapModifier = -10;
-      gapWarning = `Large gap detected (${preMarket.gapPct}%). Large gaps increase risk — reduce position size.`;
-    } else if (preMarket.gapType === 'GAP_UP' || preMarket.gapType === 'GAP_DOWN') {
-      gapModifier = -5;
-    }
+  if (preMarket?.gapType === 'GAP_UP_LARGE' || preMarket?.gapType === 'GAP_DOWN_LARGE') {
+    gapWarning = `Large gap detected (${preMarket.gapPct}%). Reduce position size.`;
   }
 
-  // Futures alignment modifier
-  let futuresModifier = 0;
-  if (futures?.bias === 'BULLISH') futuresModifier = 5;
-  else if (futures?.bias === 'BEARISH') futuresModifier = -5;
-
   const prompt = `You are an expert quantitative trading analyst for SPY (S&P 500 ETF).
-You have REAL live data: pre-market prices, ES futures, multi-timeframe technicals, volume, AND live news.
-Synthesize ALL of this for the most accurate signal possible.
+You have REAL live data: sector rotation, pre-market, futures, multi-timeframe technicals, volume, AND news.
+Synthesize ALL data sources into the most accurate signal possible.
 
 ═══ TECHNICAL DATA (DAILY) ═══
 - SPY Price: $${price}
@@ -66,9 +54,9 @@ Synthesize ALL of this for the most accurate signal possible.
 - Bollinger Bands: ${indicators.bollingerBands
     ? `U:${indicators.bollingerBands.upper} M:${indicators.bollingerBands.middle} L:${indicators.bollingerBands.lower} (${indicators.priceVsBB})`
     : 'N/A'}
-- ATR (14): ${indicators.atr ?? 'N/A'}
-- VIX: ${vix ?? 'N/A'}
+- ATR: ${indicators.atr ?? 'N/A'} | VIX: ${vix ?? 'N/A'}
 ${preMarketSection}
+${sectorSection}
 ${volumeSection}
 ${mtfSection}
 ═══ LIVE NEWS SENTIMENT ═══
@@ -76,24 +64,27 @@ ${newsContext || 'No news data available.'}
 ${calendarAlert}
 
 ═══ SIGNAL RULES ═══
-1. Pre-market direction + futures bias = leading indicator. If ES futures are strongly bearish, be cautious on BUY signals even if technicals look bullish.
-2. Large gap (>1%): reduce confidence by 10 — gaps create unpredictable opening moves. Note the gap in reasoning.
-3. Futures confirming technicals: +5 confidence. Contradicting: -5.
-4. Low volume: reduce confidence, prefer HOLD.
-5. Mixed timeframes: -10 confidence.
-6. Full timeframe agreement: +15 confidence.
-7. News contradicting technicals: lower confidence.
-8. Calendar event within 48h: -10 confidence minimum.
-9. VIX > 25: -10 confidence.
-10. Apply ALL modifiers to your base confidence score.
-${gapWarning ? `11. ⚠ GAP WARNING: ${gapWarning}` : ''}
-11. Reasoning must reference pre-market/futures, volume, timeframe agreement, AND news. Write for a beginner.
+1. RISK_ON rotation (offensive sectors leading) = confirms BUY signals, +10 confidence.
+2. RISK_OFF rotation (defensive sectors leading) = warns against BUY signals, -10 confidence.
+3. Broad market breadth (>70% sectors positive) = confirms bullish signals.
+4. Narrow breadth (<30% positive) = confirms bearish signals.
+5. Large gap: -10 confidence, reduce position size.
+6. Futures direction confirms technicals: +5. Contradicts: -5.
+7. Low volume: prefer HOLD, reduce confidence.
+8. Mixed MTF: -10. Full agreement: +15.
+9. News contradicting technicals: lower confidence.
+10. Calendar event within 48h: -10 minimum.
+11. VIX > 25: -10.
+12. Apply ALL modifiers. Reasoning must mention sector rotation and breadth. Write for a beginner.
+${gapWarning ? `13. ⚠ GAP WARNING: ${gapWarning}` : ''}
 
 Return ONLY a valid JSON object, no markdown:
 {
   "signal": "BUY" or "SELL" or "HOLD",
   "confidence": integer 40–95,
-  "reasoning": "4-6 sentences covering pre-market/futures direction, volume, timeframe agreement, key indicators, news. Plain English for a beginner.",
+  "reasoning": "4-6 sentences covering sector rotation, pre-market/futures, volume, timeframe agreement, key indicators, and news. Plain English.",
+  "rotation_signal": "${sectorData?.rotation?.signal ?? 'NEUTRAL'}",
+  "breadth_pct": ${sectorData?.rotation?.breadthPct ?? null},
   "gap_type": "${preMarket?.gapType ?? 'NONE'}",
   "gap_pct": ${preMarket?.gapPct ?? null},
   "futures_bias": "${futures?.bias ?? 'NEUTRAL'}",

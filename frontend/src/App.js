@@ -4,15 +4,17 @@ import LiveFeed from './pages/LiveFeed';
 import TradeLog from './pages/TradeLog';
 import Backtest from './pages/Backtest';
 import NewsSentiment from './components/NewsSentiment';
+import SectorHeatmap from './components/SectorHeatmap';
 import { market } from './lib/api';
 import './App.css';
 
 const TABS = [
   { id: 'dashboard', label: 'Dashboard', icon: '◈' },
-  { id: 'news',      label: 'News',       icon: '◎' },
-  { id: 'feed',      label: 'Live Feed',  icon: '⬡' },
-  { id: 'trades',    label: 'Trade Log',  icon: '≡' },
-  { id: 'backtest',  label: 'Backtest',   icon: '▦' },
+  { id: 'news',      label: 'News',      icon: '◎' },
+  { id: 'sectors',   label: 'Sectors',   icon: '⬡' },
+  { id: 'feed',      label: 'Live Feed', icon: '≋' },
+  { id: 'trades',    label: 'Trade Log', icon: '≡' },
+  { id: 'backtest',  label: 'Backtest',  icon: '▦' },
 ];
 
 export default function App() {
@@ -83,6 +85,7 @@ export default function App() {
       <main className="main">
         {tab === 'dashboard' && <Dashboard snapshot={snapshot} />}
         {tab === 'news'      && <div style={{ maxWidth: 800 }}><NewsSentiment /></div>}
+        {tab === 'sectors'   && <div style={{ maxWidth: 800 }}><SectorHeatmap /></div>}
         {tab === 'feed'      && <LiveFeed snapshot={snapshot} />}
         {tab === 'trades' && <TradeLog />}
         {tab === 'backtest' && <Backtest />}
