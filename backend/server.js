@@ -3,7 +3,10 @@ const express = require('express');
 const cors = require('cors');
 const cron = require('node-cron');
 const db = require('./db');
-const { getSpySnapshot, getVix, getHistoricalBars, getIntradayBars } = require('./marketData');
+const {
+  getSpySnapshot, getVix, getHistoricalBars,
+  getIntradayBars, getPreMarketData, getFuturesData, buildPreMarketContext
+} = require('./marketData');
 const { calcAllIndicators, calcMultiTimeframe, calcVolumeAnalysis } = require('./indicators');
 const { generateSignal } = require('./aiAnalysis');
 const { runBacktest } = require('./backtest');
@@ -59,6 +62,18 @@ app.get('/api/market/prices', async (req, res) => {
   }
 });
 
+app.get('/api/market/premarket', async (req, res) => {
+  try {
+    const [preMarket, futures] = await Promise.all([
+      getPreMarketData(),
+      getFuturesData()
+    ]);
+    res.json({ preMarket, futures, fetchedAt: new Date().toISOString() });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ─── News & Calendar ─────────────────────────────────────────────────────────
 app.get('/api/news', async (req, res) => {
   try {
@@ -86,14 +101,16 @@ app.get('/api/news/calendar', async (req, res) => {
 app.post('/api/signal/generate', async (req, res) => {
   try {
     // Fetch everything in parallel for speed
-    const [bars, hourlyBars, bars15m, quote, vix, newsData, calendar] = await Promise.all([
+    const [bars, hourlyBars, bars15m, quote, vix, newsData, calendar, preMarket, futures] = await Promise.all([
       getHistoricalBars('SPY', 220),
       getIntradayBars('SPY', 1, 'hour', 7),
       getIntradayBars('SPY', 15, 'minute', 3),
       getSpySnapshot(),
       getVix(),
       getMarketNews(),
-      getEconomicCalendar()
+      getEconomicCalendar(),
+      getPreMarketData(),
+      getFuturesData()
     ]);
 
     if (!bars.length) return res.status(503).json({ error: 'Cannot fetch market data' });
@@ -118,6 +135,9 @@ app.post('/api/signal/generate', async (req, res) => {
       ? calendar.events.map(e => e.event).join(', ')
       : null;
 
+    // Build pre-market context for AI
+    const preMarketContext = buildPreMarketContext(preMarket, futures);
+
     const signal = await generateSignal({
       price: quote?.price || indicators.price,
       indicators,
@@ -127,7 +147,10 @@ app.post('/api/signal/generate', async (req, res) => {
       newsContext,
       calendarWarning,
       mtf,
-      volumeAnalysis
+      volumeAnalysis,
+      preMarketContext,
+      preMarket,
+      futures
     });
 
     // Persist signal to DB
@@ -158,6 +181,8 @@ app.post('/api/signal/generate', async (req, res) => {
       ...signal,
       indicators,
       volumeAnalysis,
+      preMarket,
+      futures,
       mtf: {
         agreement: mtf.agreement,
         confidenceModifier: mtf.confidenceModifier,

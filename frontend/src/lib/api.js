@@ -5,9 +5,10 @@ const BASE = process.env.REACT_APP_API_URL || '';
 const api = axios.create({ baseURL: BASE, timeout: 30000 });
 
 export const market = {
-  snapshot: () => api.get('/api/market/snapshot').then(r => r.data),
-  history: (days = 90) => api.get('/api/market/history', { params: { days } }).then(r => r.data),
-  prices: (limit = 200) => api.get('/api/market/prices', { params: { limit } }).then(r => r.data),
+  snapshot:  () => api.get('/api/market/snapshot').then(r => r.data),
+  history:   (days = 90) => api.get('/api/market/history', { params: { days } }).then(r => r.data),
+  prices:    (limit = 200) => api.get('/api/market/prices', { params: { limit } }).then(r => r.data),
+  premarket: () => api.get('/api/market/premarket').then(r => r.data),
 };
 
 export const news = {

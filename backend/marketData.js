@@ -150,4 +150,140 @@ async function getIntradayBars(symbol = 'SPY', multiplier = 1, timespan = 'hour'
   }
 }
 
-module.exports = { getSpyQuote, getSpySnapshot, getVix, getHistoricalBars, getIntradayBars };
+// Pre-market & futures data
+async function getPreMarketData() {
+  try {
+    // SPY pre-market price via Yahoo Finance
+    const res = await axios.get(
+      'https://query1.finance.yahoo.com/v8/finance/chart/SPY',
+      { params: { interval: '1m', range: '1d', includePrePost: true }, timeout: 6000 }
+    );
+    const meta = res.data.chart.result[0].meta;
+
+    const preMarketPrice  = meta.preMarketPrice  || null;
+    const postMarketPrice = meta.postMarketPrice || null;
+    const regularClose    = meta.previousClose   || meta.chartPreviousClose || null;
+    const regularOpen     = meta.regularMarketOpen || null;
+
+    // Calculate gap vs previous close
+    const referencePrice = regularClose || regularOpen;
+    const currentPrice   = preMarketPrice || meta.regularMarketPrice;
+    const gapDollar = referencePrice && currentPrice
+      ? parseFloat((currentPrice - referencePrice).toFixed(2))
+      : null;
+    const gapPct = referencePrice && gapDollar !== null
+      ? parseFloat((gapDollar / referencePrice * 100).toFixed(2))
+      : null;
+
+    // Classify gap
+    let gapType = 'NONE';
+    if (gapPct !== null) {
+      if      (gapPct >=  1.0) gapType = 'GAP_UP_LARGE';
+      else if (gapPct >=  0.3) gapType = 'GAP_UP';
+      else if (gapPct <= -1.0) gapType = 'GAP_DOWN_LARGE';
+      else if (gapPct <= -0.3) gapType = 'GAP_DOWN';
+    }
+
+    return {
+      preMarketPrice,
+      postMarketPrice,
+      previousClose: regularClose,
+      regularMarketOpen: regularOpen,
+      regularMarketPrice: meta.regularMarketPrice,
+      gapDollar,
+      gapPct,
+      gapType,
+      marketState: meta.marketState || 'UNKNOWN', // PRE, REGULAR, POST, CLOSED
+      source: 'yahoo',
+      fetchedAt: new Date().toISOString()
+    };
+  } catch (err) {
+    console.error('Pre-market data error:', err.message);
+    return null;
+  }
+}
+
+// ES Futures (S&P 500 futures — trades nearly 24h)
+async function getFuturesData() {
+  try {
+    // Yahoo Finance ES=F is the front-month S&P 500 futures contract
+    const res = await axios.get(
+      'https://query1.finance.yahoo.com/v8/finance/chart/ES%3DF',
+      { params: { interval: '1m', range: '1d' }, timeout: 6000 }
+    );
+    const meta = res.data.chart.result[0].meta;
+    const price       = meta.regularMarketPrice;
+    const prevClose   = meta.previousClose || meta.chartPreviousClose;
+    const change      = prevClose ? parseFloat((price - prevClose).toFixed(2))    : null;
+    const changePct   = prevClose ? parseFloat((change / prevClose * 100).toFixed(2)) : null;
+
+    // Also fetch NQ (Nasdaq futures) for context
+    let nasdaqFutures = null;
+    try {
+      const nqRes = await axios.get(
+        'https://query1.finance.yahoo.com/v8/finance/chart/NQ%3DF',
+        { params: { interval: '1m', range: '1d' }, timeout: 5000 }
+      );
+      const nqMeta = nqRes.data.chart.result[0].meta;
+      nasdaqFutures = {
+        price: nqMeta.regularMarketPrice,
+        change: nqMeta.previousClose
+          ? parseFloat((nqMeta.regularMarketPrice - nqMeta.previousClose).toFixed(2))
+          : null,
+        changePct: nqMeta.previousClose
+          ? parseFloat(((nqMeta.regularMarketPrice - nqMeta.previousClose) / nqMeta.previousClose * 100).toFixed(2))
+          : null,
+      };
+    } catch {}
+
+    return {
+      symbol: 'ES=F',
+      name: 'S&P 500 Futures',
+      price,
+      prevClose,
+      change,
+      changePct,
+      bias: changePct === null ? 'NEUTRAL' : changePct > 0.2 ? 'BULLISH' : changePct < -0.2 ? 'BEARISH' : 'NEUTRAL',
+      nasdaqFutures,
+      source: 'yahoo',
+      fetchedAt: new Date().toISOString()
+    };
+  } catch (err) {
+    console.error('Futures data error:', err.message);
+    return null;
+  }
+}
+
+// Combined pre-market context for AI prompt
+function buildPreMarketContext(preMarket, futures) {
+  if (!preMarket && !futures) return 'Pre-market data unavailable.';
+
+  const lines = [];
+
+  if (preMarket) {
+    lines.push(`Market state: ${preMarket.marketState}`);
+    if (preMarket.preMarketPrice) {
+      lines.push(`SPY pre-market price: $${preMarket.preMarketPrice}`);
+    }
+    if (preMarket.previousClose) {
+      lines.push(`Previous close: $${preMarket.previousClose}`);
+    }
+    if (preMarket.gapPct !== null) {
+      lines.push(`Gap vs prev close: ${preMarket.gapPct >= 0 ? '+' : ''}${preMarket.gapPct}% (${preMarket.gapType.replace(/_/g, ' ')})`);
+    }
+  }
+
+  if (futures) {
+    lines.push(`S&P 500 futures (ES): $${futures.price} (${futures.changePct >= 0 ? '+' : ''}${futures.changePct}%) — ${futures.bias}`);
+    if (futures.nasdaqFutures) {
+      lines.push(`Nasdaq futures (NQ): ${futures.nasdaqFutures.changePct >= 0 ? '+' : ''}${futures.nasdaqFutures.changePct}%`);
+    }
+  }
+
+  return lines.join('\n');
+}
+
+module.exports = {
+  getSpyQuote, getSpySnapshot, getVix, getHistoricalBars,
+  getIntradayBars, getPreMarketData, getFuturesData, buildPreMarketContext
+};

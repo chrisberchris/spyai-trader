@@ -4,6 +4,7 @@ import { signals, market } from '../lib/api';
 import NewsSentiment from '../components/NewsSentiment';
 import MultiTimeframe from '../components/MultiTimeframe';
 import VolumeConfirmation from '../components/VolumeConfirmation';
+import PreMarket from '../components/PreMarket';
 
 export default function Dashboard({ snapshot }) {
   const [signal, setSignal] = useState(null);
@@ -185,6 +186,8 @@ export default function Dashboard({ snapshot }) {
               <div className="empty">Run analysis to see call/put recommendations.</div>
             )}
           </div>
+
+          <PreMarket signalPreMarket={signal?.preMarket} signalFutures={signal?.futures} />
 
           <NewsSentiment signalNewsData={signal?.newsData ? { ...signal.newsData, news_impact: signal.news_impact, news_summary: signal.news_summary } : null} />
         </div>
