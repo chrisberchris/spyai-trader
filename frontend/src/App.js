@@ -3,10 +3,12 @@ import Dashboard from './pages/Dashboard';
 import LiveFeed from './pages/LiveFeed';
 import TradeLog from './pages/TradeLog';
 import Backtest from './pages/Backtest';
+import AuthPage from './pages/AuthPage';
 import NewsSentiment from './components/NewsSentiment';
 import SectorHeatmap from './components/SectorHeatmap';
 import OptionsFlow from './components/OptionsFlow';
 import { market } from './lib/api';
+import { auth } from './lib/supabase';
 import './App.css';
 
 const TABS = [
@@ -20,10 +22,25 @@ const TABS = [
 ];
 
 export default function App() {
-  const [tab, setTab] = useState('dashboard');
+  const [tab, setTab]           = useState('dashboard');
   const [snapshot, setSnapshot] = useState(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading]   = useState(true);
   const [lastUpdate, setLastUpdate] = useState(null);
+  const [session, setSession]   = useState(null);
+  const [authLoading, setAuthLoading] = useState(true);
+
+  // Listen for auth state changes
+  useEffect(() => {
+    auth.getSession().then(({ data: { session } }) => {
+      setSession(session);
+      setAuthLoading(false);
+    });
+    const { data: { subscription } } = auth.onAuthChange((_event, session) => {
+      setSession(session);
+      setAuthLoading(false);
+    });
+    return () => subscription.unsubscribe();
+  }, []);
 
   const fetchSnapshot = useCallback(async () => {
     try {
@@ -38,13 +55,27 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    if (!session) return;
     fetchSnapshot();
     const interval = setInterval(fetchSnapshot, 30000);
     return () => clearInterval(interval);
-  }, [fetchSnapshot]);
+  }, [fetchSnapshot, session]);
 
-  const change = snapshot ? snapshot.price - (snapshot.prevClose || snapshot.open) : 0;
+  // Show blank while checking auth
+  if (authLoading) {
+    return (
+      <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--color-background-tertiary)' }}>
+        <div style={{ fontSize: 13, color: 'var(--color-text-secondary)' }}>Loading...</div>
+      </div>
+    );
+  }
+
+  // Show login if not authenticated
+  if (!session) return <AuthPage />;
+
+  const change    = snapshot ? snapshot.price - (snapshot.prevClose || snapshot.open) : 0;
   const changePct = snapshot && snapshot.prevClose ? (change / snapshot.prevClose) * 100 : 0;
+  const userEmail = session.user?.email || '';
 
   return (
     <div className="app">
@@ -64,10 +95,21 @@ export default function App() {
             </div>
           )}
         </div>
-        <div className="header-right">
+        <div className="header-right" style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           <div className={`live-pill ${loading ? 'loading' : ''}`}>
             <span className="live-dot" />
             {lastUpdate ? `Updated ${lastUpdate.toLocaleTimeString()}` : 'Connecting...'}
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span style={{ fontSize: 11, color: 'var(--color-text-secondary)', maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {userEmail}
+            </span>
+            <button
+              onClick={() => auth.signOut()}
+              style={{ fontSize: 11, padding: '4px 10px', background: 'var(--color-background-secondary)', border: '0.5px solid var(--color-border-tertiary)', borderRadius: 'var(--border-radius-md)', color: 'var(--color-text-secondary)', cursor: 'pointer' }}
+            >
+              Sign out
+            </button>
           </div>
         </div>
       </header>
@@ -90,8 +132,8 @@ export default function App() {
         {tab === 'news'      && <div style={{ maxWidth: 800 }}><NewsSentiment /></div>}
         {tab === 'sectors'   && <div style={{ maxWidth: 800 }}><SectorHeatmap /></div>}
         {tab === 'feed'      && <LiveFeed snapshot={snapshot} />}
-        {tab === 'trades' && <TradeLog />}
-        {tab === 'backtest' && <Backtest />}
+        {tab === 'trades'    && <TradeLog />}
+        {tab === 'backtest'  && <Backtest />}
       </main>
 
       <footer className="footer">

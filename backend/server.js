@@ -13,6 +13,7 @@ const { runBacktest } = require('./backtest');
 const { getMarketNews, getEconomicCalendar, buildNewsContext } = require('./news');
 const { getSectorData, buildSectorContext } = require('./sectors');
 const { getOptionsFlow, buildOptionsFlowContext } = require('./optionsFlow');
+const { requireAuth } = require('./authMiddleware');
 
 const app = express();
 app.use(cors({ origin: process.env.FRONTEND_URL || '*' }));
@@ -119,7 +120,7 @@ app.get('/api/news/calendar', async (req, res) => {
 });
 
 // ─── AI Signal ───────────────────────────────────────────────────────────────
-app.post('/api/signal/generate', async (req, res) => {
+app.post('/api/signal/generate', requireAuth, async (req, res) => {
   try {
     // Fetch everything in parallel for speed
     const [bars, hourlyBars, bars15m, quote, vix, newsData, calendar, preMarket, futures, sectorData, optionsFlow] = await Promise.allSettled([
@@ -203,11 +204,11 @@ app.post('/api/signal/generate', async (req, res) => {
     // Persist signal to DB
     const { rows } = await db.query(
       `INSERT INTO signals (symbol, signal, confidence, entry_price, target_price, stop_loss,
-        reasoning, rsi, macd, vix, raw_response)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id`,
-      ['SPY', signal.signal, signal.confidence, signal.entry_price, signal.target_price,
+        reasoning, rsi, macd, vix, raw_response, user_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING id`,
+      ['SPY', signal.signal, confidenceScore.adjusted, signal.entry_price, signal.target_price,
        signal.stop_loss, signal.reasoning, indicators.rsi, indicators.macd, vix,
-       JSON.stringify(signal)]
+       JSON.stringify(signal), req.userId]
     );
 
     const signalId = rows[0].id;
@@ -292,10 +293,11 @@ app.get('/api/signal/history', async (req, res) => {
 });
 
 // ─── Trades ──────────────────────────────────────────────────────────────────
-app.get('/api/trades', async (req, res) => {
+app.get('/api/trades', requireAuth, async (req, res) => {
   try {
     const { rows } = await db.query(
-      `SELECT * FROM trades ORDER BY opened_at DESC LIMIT 100`
+      `SELECT * FROM trades WHERE user_id=$1 ORDER BY opened_at DESC LIMIT 100`,
+      [req.userId]
     );
     res.json(rows);
   } catch (err) {
@@ -303,13 +305,13 @@ app.get('/api/trades', async (req, res) => {
   }
 });
 
-app.post('/api/trades', async (req, res) => {
+app.post('/api/trades', requireAuth, async (req, res) => {
   try {
     const { signal_id, side, quantity = 1, entry_price, notes } = req.body;
     const { rows } = await db.query(
-      `INSERT INTO trades (signal_id, side, quantity, entry_price, notes)
-       VALUES ($1,$2,$3,$4,$5) RETURNING *`,
-      [signal_id, side, quantity, entry_price, notes]
+      `INSERT INTO trades (signal_id, side, quantity, entry_price, notes, user_id)
+       VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
+      [signal_id, side, quantity, entry_price, notes, req.userId]
     );
     res.json(rows[0]);
   } catch (err) {
@@ -317,20 +319,23 @@ app.post('/api/trades', async (req, res) => {
   }
 });
 
-app.patch('/api/trades/:id/close', async (req, res) => {
+app.patch('/api/trades/:id/close', requireAuth, async (req, res) => {
   try {
     const { exit_price, notes } = req.body;
-    const { rows: [trade] } = await db.query('SELECT * FROM trades WHERE id=$1', [req.params.id]);
+    const { rows: [trade] } = await db.query(
+      'SELECT * FROM trades WHERE id=$1 AND user_id=$2',
+      [req.params.id, req.userId]
+    );
     if (!trade) return res.status(404).json({ error: 'Trade not found' });
 
-    const pnl = (exit_price - trade.entry_price) * trade.quantity * (trade.side === 'BUY' ? 1 : -1);
+    const pnl    = (exit_price - trade.entry_price) * trade.quantity * (trade.side === 'BUY' ? 1 : -1);
     const pnlPct = (exit_price - trade.entry_price) / trade.entry_price * 100;
 
     const { rows } = await db.query(
       `UPDATE trades SET exit_price=$1, pnl=$2, pnl_pct=$3, status='CLOSED',
         closed_at=NOW(), notes=COALESCE($4, notes)
-       WHERE id=$5 RETURNING *`,
-      [exit_price, pnl.toFixed(4), pnlPct.toFixed(4), notes, req.params.id]
+       WHERE id=$5 AND user_id=$6 RETURNING *`,
+      [exit_price, pnl.toFixed(4), pnlPct.toFixed(4), notes, req.params.id, req.userId]
     );
     res.json(rows[0]);
   } catch (err) {
@@ -338,9 +343,20 @@ app.patch('/api/trades/:id/close', async (req, res) => {
   }
 });
 
-app.get('/api/trades/performance', async (req, res) => {
+app.get('/api/trades/performance', requireAuth, async (req, res) => {
   try {
-    const { rows } = await db.query('SELECT * FROM trade_performance');
+    const { rows } = await db.query(
+      `SELECT
+        COUNT(*) AS total_trades,
+        COUNT(*) FILTER (WHERE status='CLOSED') AS closed_trades,
+        COUNT(*) FILTER (WHERE status='CLOSED' AND pnl > 0) AS winning_trades,
+        ROUND(COUNT(*) FILTER (WHERE status='CLOSED' AND pnl > 0)::DECIMAL /
+          NULLIF(COUNT(*) FILTER (WHERE status='CLOSED'),0)*100,1) AS win_rate_pct,
+        ROUND(COALESCE(SUM(pnl) FILTER (WHERE status='CLOSED'),0),2) AS total_pnl,
+        ROUND(COALESCE(AVG(pnl) FILTER (WHERE status='CLOSED'),0),2) AS avg_pnl
+       FROM trades WHERE user_id=$1`,
+      [req.userId]
+    );
     res.json(rows[0]);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -348,7 +364,7 @@ app.get('/api/trades/performance', async (req, res) => {
 });
 
 // ─── Backtest ─────────────────────────────────────────────────────────────────
-app.post('/api/backtest/run', async (req, res) => {
+app.post('/api/backtest/run', requireAuth, async (req, res) => {
   try {
     const { strategy = 'combo', period_days = 90, starting_capital = 10000 } = req.body;
     const bars = await getHistoricalBars('SPY', period_days + 30);
@@ -356,14 +372,13 @@ app.post('/api/backtest/run', async (req, res) => {
 
     const result = runBacktest({ bars, strategy, startingCapital: starting_capital });
 
-    // Store backtest run
     await db.query(
       `INSERT INTO backtests (strategy, period_days, starting_capital, final_capital,
-        total_return_pct, win_rate_pct, total_trades, max_drawdown_pct, equity_curve, trade_log)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+        total_return_pct, win_rate_pct, total_trades, max_drawdown_pct, equity_curve, trade_log, user_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
       [strategy, period_days, starting_capital, result.finalEquity, result.totalReturn,
        result.winRate, result.totalTrades, result.maxDrawdown,
-       JSON.stringify(result.equityCurve), JSON.stringify(result.trades)]
+       JSON.stringify(result.equityCurve), JSON.stringify(result.trades), req.userId]
     );
 
     res.json(result);
@@ -373,12 +388,13 @@ app.post('/api/backtest/run', async (req, res) => {
   }
 });
 
-app.get('/api/backtest/history', async (req, res) => {
+app.get('/api/backtest/history', requireAuth, async (req, res) => {
   try {
     const { rows } = await db.query(
       `SELECT id, strategy, period_days, starting_capital, final_capital,
               total_return_pct, win_rate_pct, total_trades, max_drawdown_pct, run_at
-       FROM backtests ORDER BY run_at DESC LIMIT 20`
+       FROM backtests WHERE user_id=$1 ORDER BY run_at DESC LIMIT 20`,
+      [req.userId]
     );
     res.json(rows);
   } catch (err) {
