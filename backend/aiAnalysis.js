@@ -4,32 +4,37 @@ const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 async function generateSignal({
   price, indicators, vix, volume, avgVolume,
-  newsContext, calendarWarning, mtf
+  newsContext, calendarWarning, mtf, volumeAnalysis
 }) {
-  const volumeStr = volume && avgVolume
-    ? `${((volume / avgVolume) * 100).toFixed(0)}% of average`
-    : 'N/A';
-
   const calendarAlert = calendarWarning
     ? `\n⚠ HIGH-IMPACT EVENT IN NEXT 48H: ${calendarWarning}. Reduce confidence accordingly.`
     : '';
 
-  // Build multi-timeframe section
+  // Volume section
+  const volumeSection = volumeAnalysis ? `
+═══ VOLUME CONFIRMATION ═══
+Current volume:    ${volumeAnalysis.current?.toLocaleString() ?? 'N/A'}
+20-day avg volume: ${volumeAnalysis.avg20?.toLocaleString() ?? 'N/A'}
+Volume vs avg:     ${volumeAnalysis.pct ?? 'N/A'}% (${volumeAnalysis.label?.replace('_', ' ') ?? 'N/A'})
+Tradeable:         ${volumeAnalysis.tradeable ? 'YES' : 'NO — low volume, signal unreliable'}
+Confidence modifier from volume: ${volumeAnalysis.confidenceModifier > 0 ? '+' : ''}${volumeAnalysis.confidenceModifier} points
+${volumeAnalysis.warning ? `⚠ WARNING: ${volumeAnalysis.warning}` : ''}
+` : `\n═══ VOLUME ═══\nVolume data unavailable.\n`;
+
+  // Multi-timeframe section
   const mtfSection = mtf ? `
 ═══ MULTI-TIMEFRAME ANALYSIS ═══
 ${mtf.summary}
-
 Timeframe agreement: ${mtf.agreement.replace('_', ' ')}
 Confidence modifier from timeframe alignment: ${mtf.confidenceModifier > 0 ? '+' : ''}${mtf.confidenceModifier} points
-
-Daily  — Bias: ${mtf.daily.bias  || 'N/A'} | RSI: ${mtf.daily.rsi  || 'N/A'} | MACD: ${mtf.daily.macd  || 'N/A'} | Price vs SMA20: ${mtf.daily.priceVsSMA20  || 'N/A'}
-Hourly — Bias: ${mtf.hourly.bias || 'N/A'} | RSI: ${mtf.hourly.rsi || 'N/A'} | MACD: ${mtf.hourly.macd || 'N/A'} | Price vs SMA20: ${mtf.hourly.priceVsSMA20 || 'N/A'}
-15-min — Bias: ${mtf.m15.bias    || 'N/A'} | RSI: ${mtf.m15.rsi    || 'N/A'} | MACD: ${mtf.m15.macd    || 'N/A'} | Price vs SMA20: ${mtf.m15.priceVsSMA20    || 'N/A'}
-` : '\n═══ MULTI-TIMEFRAME ═══\nNot available — using daily only.\n';
+Daily  — Bias: ${mtf.daily.bias  || 'N/A'} | RSI: ${mtf.daily.rsi  || 'N/A'} | MACD: ${mtf.daily.macd  || 'N/A'}
+Hourly — Bias: ${mtf.hourly.bias || 'N/A'} | RSI: ${mtf.hourly.rsi || 'N/A'} | MACD: ${mtf.hourly.macd || 'N/A'}
+15-min — Bias: ${mtf.m15.bias    || 'N/A'} | RSI: ${mtf.m15.rsi    || 'N/A'} | MACD: ${mtf.m15.macd    || 'N/A'}
+` : '\n═══ MULTI-TIMEFRAME ═══\nNot available.\n';
 
   const prompt = `You are an expert quantitative trading analyst for SPY (S&P 500 ETF).
-You have access to REAL live market data across MULTIPLE TIMEFRAMES, technical indicators, AND live news sentiment.
-Your job is to synthesize ALL of this into the most accurate possible trading signal.
+You have REAL live data across multiple timeframes, volume analysis, technical indicators, AND live news sentiment.
+Synthesize ALL of this into the most accurate possible trading signal.
 
 ═══ TECHNICAL DATA (DAILY) ═══
 - SPY Price: $${price}
@@ -43,28 +48,32 @@ Your job is to synthesize ALL of this into the most accurate possible trading si
     : 'N/A'}
 - ATR (14): ${indicators.atr ?? 'N/A'}
 - VIX: ${vix ?? 'N/A'}
-- Volume vs avg: ${volumeStr}
+${volumeSection}
 ${mtfSection}
 ═══ LIVE NEWS SENTIMENT ═══
 ${newsContext || 'No news data available.'}
 ${calendarAlert}
 
 ═══ SIGNAL RULES ═══
-1. FULL agreement across all 3 timeframes = high conviction, max confidence boost +15.
-2. MIXED timeframes = conflicting signals, reduce confidence by 10, lean HOLD unless news strongly confirms.
-3. News sentiment contradicts technicals = reduce confidence, note contradiction in reasoning.
-4. News confirms technicals = increase confidence.
-5. High-impact economic event within 48h = reduce confidence by 10 minimum, always note it.
-6. VIX above 25 = reduce confidence by 10, note elevated volatility.
-7. Apply the confidenceModifier from multi-timeframe alignment to your base confidence.
-8. Write reasoning that mentions ALL THREE timeframes and news context — beginners need to understand why.
+1. LOW or VERY_LOW volume = automatically reduce confidence by the volume confidenceModifier. Prefer HOLD on low-volume days unless other signals are exceptionally strong.
+2. VERY_HIGH or HIGH volume on a directional move = strong confirmation, apply volume confidenceModifier bonus.
+3. FULL timeframe agreement = +15 confidence. MIXED = -10.
+4. News confirming technicals = increase confidence. News contradicting = decrease.
+5. Calendar event within 48h = reduce confidence by 10 minimum.
+6. VIX above 25 = reduce confidence by 10, note elevated risk.
+7. Combine ALL modifiers: base confidence + volume modifier + MTF modifier + news adjustment.
+8. Reasoning must mention volume level, timeframe agreement, AND news context. Write for a beginner.
+9. If volume is LOW/VERY_LOW, explicitly warn in reasoning that this reduces signal reliability.
 
 Return ONLY a valid JSON object, no markdown, no extra text:
 {
   "signal": "BUY" or "SELL" or "HOLD",
-  "confidence": integer 40–95 (apply mtf confidenceModifier to your base),
-  "reasoning": "4-6 sentences covering daily indicators, hourly/15min confirmation or conflict, AND news context. Plain English for a beginner.",
-  "timeframe_agreement": "${mtf?.agreement || 'UNKNOWN'}",
+  "confidence": integer 40–95,
+  "reasoning": "4-6 sentences covering: volume level, timeframe agreement, key indicators, news context. Plain English.",
+  "volume_label": "${volumeAnalysis?.label ?? 'UNKNOWN'}",
+  "volume_pct": ${volumeAnalysis?.pct ?? null},
+  "volume_tradeable": ${volumeAnalysis?.tradeable ?? true},
+  "timeframe_agreement": "${mtf?.agreement ?? 'UNKNOWN'}",
   "news_impact": "CONFIRMING" or "CONTRADICTING" or "NEUTRAL",
   "news_summary": "one sentence on how news affects this signal",
   "calendar_warning": ${calendarWarning ? `"${calendarWarning}"` : 'null'},

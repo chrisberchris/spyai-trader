@@ -4,7 +4,7 @@ const cors = require('cors');
 const cron = require('node-cron');
 const db = require('./db');
 const { getSpySnapshot, getVix, getHistoricalBars, getIntradayBars } = require('./marketData');
-const { calcAllIndicators, calcMultiTimeframe } = require('./indicators');
+const { calcAllIndicators, calcMultiTimeframe, calcVolumeAnalysis } = require('./indicators');
 const { generateSignal } = require('./aiAnalysis');
 const { runBacktest } = require('./backtest');
 const { getMarketNews, getEconomicCalendar, buildNewsContext } = require('./news');
@@ -103,6 +103,9 @@ app.post('/api/signal/generate', async (req, res) => {
     // Multi-timeframe analysis
     const mtf = calcMultiTimeframe(bars, hourlyBars, bars15m);
 
+    // Volume confirmation analysis
+    const volumeAnalysis = calcVolumeAnalysis(bars, quote?.volume);
+
     // Build news context string for AI prompt
     const newsContext = buildNewsContext({
       articles: newsData.articles,
@@ -123,7 +126,8 @@ app.post('/api/signal/generate', async (req, res) => {
       avgVolume: 80000000,
       newsContext,
       calendarWarning,
-      mtf
+      mtf,
+      volumeAnalysis
     });
 
     // Persist signal to DB
@@ -153,6 +157,7 @@ app.post('/api/signal/generate', async (req, res) => {
       signalId,
       ...signal,
       indicators,
+      volumeAnalysis,
       mtf: {
         agreement: mtf.agreement,
         confidenceModifier: mtf.confidenceModifier,

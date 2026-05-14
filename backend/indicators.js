@@ -193,7 +193,62 @@ function buildMTFSummary(daily, hourly, m15, agreement) {
   return lines.join('\n');
 }
 
+// Volume confirmation analysis
+// Returns volume context including 20-day average, ratio, and a trading recommendation
+function calcVolumeAnalysis(bars, currentVolume) {
+  if (!bars || bars.length < 20) return null;
+
+  // 20-day average volume from historical bars
+  const recentBars = bars.slice(-20);
+  const avgVolume20 = Math.round(
+    recentBars.reduce((sum, b) => sum + (b.v || 0), 0) / recentBars.length
+  );
+
+  // 5-day average (shorter-term baseline)
+  const avgVolume5 = Math.round(
+    bars.slice(-5).reduce((sum, b) => sum + (b.v || 0), 0) / 5
+  );
+
+  const volume = currentVolume || bars[bars.length - 1].v || 0;
+  const ratio20 = avgVolume20 > 0 ? parseFloat((volume / avgVolume20).toFixed(2)) : null;
+  const ratio5  = avgVolume5  > 0 ? parseFloat((volume / avgVolume5).toFixed(2))  : null;
+
+  // Classification
+  let label, confidenceModifier, tradeable;
+  if (ratio20 === null) {
+    label = 'UNKNOWN'; confidenceModifier = 0; tradeable = true;
+  } else if (ratio20 >= 1.5) {
+    label = 'VERY_HIGH'; confidenceModifier = 10; tradeable = true;
+  } else if (ratio20 >= 1.2) {
+    label = 'HIGH';      confidenceModifier = 5;  tradeable = true;
+  } else if (ratio20 >= 0.8) {
+    label = 'NORMAL';    confidenceModifier = 0;  tradeable = true;
+  } else if (ratio20 >= 0.5) {
+    label = 'LOW';       confidenceModifier = -8; tradeable = false;
+  } else {
+    label = 'VERY_LOW';  confidenceModifier = -15; tradeable = false;
+  }
+
+  const pct = ratio20 !== null ? Math.round(ratio20 * 100) : null;
+
+  return {
+    current: volume,
+    avg20: avgVolume20,
+    avg5: avgVolume5,
+    ratio20,
+    ratio5,
+    label,
+    pct,                    // e.g. 142 means 142% of average
+    confidenceModifier,
+    tradeable,              // false = low volume, signal less reliable
+    warning: !tradeable
+      ? `Volume is only ${pct}% of its 20-day average. Low-volume moves are unreliable — confidence reduced.`
+      : null,
+    summary: `Current volume is ${pct}% of 20-day average (${label.replace('_', ' ').toLowerCase()})`
+  };
+}
+
 module.exports = {
   calcRSI, calcEMA, calcSMA, calcMACD, calcBollingerBands, calcATR,
-  calcAllIndicators, calcTimeframeIndicators, calcMultiTimeframe
+  calcAllIndicators, calcTimeframeIndicators, calcMultiTimeframe, calcVolumeAnalysis
 };
