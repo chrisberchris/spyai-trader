@@ -98,4 +98,102 @@ function calcAllIndicators(bars) {
   };
 }
 
-module.exports = { calcRSI, calcEMA, calcSMA, calcMACD, calcBollingerBands, calcATR, calcAllIndicators };
+// Multi-timeframe analysis — returns indicators for a given bar set
+// plus an agreement score across timeframes
+function calcTimeframeIndicators(bars, label) {
+  if (!bars || bars.length < 20) return { label, sufficient: false };
+  const closes = bars.map(b => b.c);
+  const highs   = bars.map(b => b.h);
+  const lows    = bars.map(b => b.l);
+  const current = closes[closes.length - 1];
+
+  const rsi  = calcRSI(closes);
+  const { macd } = calcMACD(closes);
+  const sma20 = calcSMA(closes, Math.min(20, closes.length));
+  const sma50 = calcSMA(closes, Math.min(50, closes.length));
+  const bb    = calcBollingerBands(closes, Math.min(20, closes.length));
+  const atr   = calcATR(highs, lows, closes, Math.min(14, closes.length - 1));
+  const ema9  = calcEMA(closes, Math.min(9, closes.length));
+
+  // Derive bias: +1 bullish, -1 bearish, 0 neutral for each signal
+  const signals = [
+    rsi !== null ? (rsi < 45 ? 1 : rsi > 60 ? -1 : 0) : 0,
+    macd !== null ? (macd > 0.1 ? 1 : macd < -0.1 ? -1 : 0) : 0,
+    sma20 && sma50 ? (sma20 > sma50 ? 1 : -1) : 0,
+    bb ? (current < bb.lower ? 1 : current > bb.upper ? -1 : 0) : 0,
+    ema9 ? (current > ema9 ? 1 : -1) : 0,
+  ];
+
+  const score = signals.reduce((a, b) => a + b, 0);
+  const bias  = score >= 2 ? 'BULLISH' : score <= -2 ? 'BEARISH' : 'NEUTRAL';
+
+  return {
+    label,
+    sufficient: true,
+    price: parseFloat(current.toFixed(4)),
+    rsi,
+    macd,
+    sma20,
+    sma50,
+    bb,
+    atr,
+    ema9,
+    bias,
+    score,
+    signals,
+    priceVsSMA20: sma20 ? (current > sma20 ? 'above' : 'below') : null,
+    priceVsBB: bb ? (current > bb.upper ? 'above' : current < bb.lower ? 'below' : 'inside') : null,
+  };
+}
+
+// Combine daily + hourly + 15min into one multi-timeframe summary
+function calcMultiTimeframe(dailyBars, hourlyBars, bars15m) {
+  const daily  = calcTimeframeIndicators(dailyBars,  'daily');
+  const hourly = calcTimeframeIndicators(hourlyBars, 'hourly');
+  const m15    = calcTimeframeIndicators(bars15m,    '15min');
+
+  // Agreement: how many timeframes share the same bias
+  const biases = [daily, hourly, m15].filter(t => t.sufficient).map(t => t.bias);
+  const bullCount = biases.filter(b => b === 'BULLISH').length;
+  const bearCount = biases.filter(b => b === 'BEARISH').length;
+  const agreement = bullCount === biases.length ? 'FULL_BULL'
+    : bearCount === biases.length ? 'FULL_BEAR'
+    : bullCount >= 2 ? 'MOSTLY_BULL'
+    : bearCount >= 2 ? 'MOSTLY_BEAR'
+    : 'MIXED';
+
+  const agreementScore = Math.round(
+    [daily, hourly, m15].filter(t => t.sufficient).reduce((a, t) => a + Math.abs(t.score), 0) /
+    Math.max([daily, hourly, m15].filter(t => t.sufficient).length, 1)
+  );
+
+  // Confidence modifier based on agreement
+  const confidenceModifier =
+    agreement === 'FULL_BULL' || agreement === 'FULL_BEAR'   ?  15 :
+    agreement === 'MOSTLY_BULL' || agreement === 'MOSTLY_BEAR' ?  5 :
+    -10; // mixed = lower confidence
+
+  return {
+    daily,
+    hourly,
+    m15,
+    agreement,
+    agreementScore,
+    confidenceModifier,
+    summary: buildMTFSummary(daily, hourly, m15, agreement),
+  };
+}
+
+function buildMTFSummary(daily, hourly, m15, agreement) {
+  const lines = [];
+  if (daily.sufficient)  lines.push(`Daily: ${daily.bias} (RSI ${daily.rsi}, MACD ${daily.macd})`);
+  if (hourly.sufficient) lines.push(`Hourly: ${hourly.bias} (RSI ${hourly.rsi}, MACD ${hourly.macd})`);
+  if (m15.sufficient)    lines.push(`15-min: ${m15.bias} (RSI ${m15.rsi}, MACD ${m15.macd})`);
+  lines.push(`Timeframe agreement: ${agreement.replace('_', ' ')}`);
+  return lines.join('\n');
+}
+
+module.exports = {
+  calcRSI, calcEMA, calcSMA, calcMACD, calcBollingerBands, calcATR,
+  calcAllIndicators, calcTimeframeIndicators, calcMultiTimeframe
+};

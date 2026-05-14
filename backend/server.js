@@ -3,8 +3,8 @@ const express = require('express');
 const cors = require('cors');
 const cron = require('node-cron');
 const db = require('./db');
-const { getSpySnapshot, getVix, getHistoricalBars } = require('./marketData');
-const { calcAllIndicators } = require('./indicators');
+const { getSpySnapshot, getVix, getHistoricalBars, getIntradayBars } = require('./marketData');
+const { calcAllIndicators, calcMultiTimeframe } = require('./indicators');
 const { generateSignal } = require('./aiAnalysis');
 const { runBacktest } = require('./backtest');
 const { getMarketNews, getEconomicCalendar, buildNewsContext } = require('./news');
@@ -86,8 +86,10 @@ app.get('/api/news/calendar', async (req, res) => {
 app.post('/api/signal/generate', async (req, res) => {
   try {
     // Fetch everything in parallel for speed
-    const [bars, quote, vix, newsData, calendar] = await Promise.all([
+    const [bars, hourlyBars, bars15m, quote, vix, newsData, calendar] = await Promise.all([
       getHistoricalBars('SPY', 220),
+      getIntradayBars('SPY', 1, 'hour', 7),
+      getIntradayBars('SPY', 15, 'minute', 3),
       getSpySnapshot(),
       getVix(),
       getMarketNews(),
@@ -97,6 +99,9 @@ app.post('/api/signal/generate', async (req, res) => {
     if (!bars.length) return res.status(503).json({ error: 'Cannot fetch market data' });
 
     const indicators = calcAllIndicators(bars);
+
+    // Multi-timeframe analysis
+    const mtf = calcMultiTimeframe(bars, hourlyBars, bars15m);
 
     // Build news context string for AI prompt
     const newsContext = buildNewsContext({
@@ -117,7 +122,8 @@ app.post('/api/signal/generate', async (req, res) => {
       volume: quote?.volume,
       avgVolume: 80000000,
       newsContext,
-      calendarWarning
+      calendarWarning,
+      mtf
     });
 
     // Persist signal to DB
@@ -147,6 +153,13 @@ app.post('/api/signal/generate', async (req, res) => {
       signalId,
       ...signal,
       indicators,
+      mtf: {
+        agreement: mtf.agreement,
+        confidenceModifier: mtf.confidenceModifier,
+        daily:  { bias: mtf.daily.bias,  rsi: mtf.daily.rsi,  macd: mtf.daily.macd,  sufficient: mtf.daily.sufficient  },
+        hourly: { bias: mtf.hourly.bias, rsi: mtf.hourly.rsi, macd: mtf.hourly.macd, sufficient: mtf.hourly.sufficient },
+        m15:    { bias: mtf.m15.bias,    rsi: mtf.m15.rsi,    macd: mtf.m15.macd,    sufficient: mtf.m15.sufficient    },
+      },
       newsData: {
         overall: newsData.overall,
         articles: newsData.articles?.slice(0, 8),

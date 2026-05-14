@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
 import { signals, market } from '../lib/api';
 import NewsSentiment from '../components/NewsSentiment';
+import MultiTimeframe from '../components/MultiTimeframe';
 
 export default function Dashboard({ snapshot }) {
   const [signal, setSignal] = useState(null);
@@ -155,6 +156,8 @@ export default function Dashboard({ snapshot }) {
               </div>
             </div>
           )}
+
+          <MultiTimeframe mtf={signal?.mtf} />
 
           {error && <div style={{ color: 'var(--red)', fontSize: 12, marginBottom: 10 }}>{error}</div>}
           <button className="btn btn-full btn-green" onClick={runAnalysis} disabled={analyzing}>
