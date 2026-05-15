@@ -12,7 +12,6 @@ const { generateSignal } = require('./aiAnalysis');
 const { runBacktest } = require('./backtest');
 const { getMarketNews, getEconomicCalendar, buildNewsContext } = require('./news');
 const { getSectorData, buildSectorContext } = require('./sectors');
-const { getOptionsFlow, buildOptionsFlowContext } = require('./optionsFlow');
 const { requireAuth } = require('./authMiddleware');
 
 const app = express();
@@ -60,16 +59,6 @@ app.get('/api/market/prices', async (req, res) => {
        ORDER BY recorded_at DESC LIMIT $1`, [limit]
     );
     res.json(rows.reverse());
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-app.get('/api/market/options-flow', async (req, res) => {
-  try {
-    const flow = await getOptionsFlow('SPY');
-    if (!flow) return res.status(503).json({ error: 'Options data unavailable' });
-    res.json(flow);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -123,7 +112,7 @@ app.get('/api/news/calendar', async (req, res) => {
 app.post('/api/signal/generate', requireAuth, async (req, res) => {
   try {
     // Fetch everything in parallel for speed
-    const [bars, hourlyBars, bars15m, quote, vix, newsData, calendar, preMarket, futures, sectorData, optionsFlow] = await Promise.allSettled([
+    const [bars, hourlyBars, bars15m, quote, vix, newsData, calendar, preMarket, futures, sectorData] = await Promise.allSettled([
       getHistoricalBars('SPY', 220),
       getIntradayBars('SPY', 1, 'hour', 7),
       getIntradayBars('SPY', 15, 'minute', 3),
@@ -133,8 +122,7 @@ app.post('/api/signal/generate', requireAuth, async (req, res) => {
       getEconomicCalendar(),
       getPreMarketData(),
       getFuturesData(),
-      getSectorData(),
-      getOptionsFlow('SPY')
+      getSectorData()
     ]).then(results => results.map(r => r.status === 'fulfilled' ? r.value : null));
 
     if (!bars.length) return res.status(503).json({ error: 'Cannot fetch market data' });
@@ -165,40 +153,24 @@ app.post('/api/signal/generate', requireAuth, async (req, res) => {
     // Build sector rotation context for AI
     const sectorContext = buildSectorContext(sectorData);
 
-    // Build options flow context for AI
-    const optionsFlowContext = buildOptionsFlowContext(optionsFlow);
-
     const signal = await generateSignal({
       price: quote?.price || indicators.price,
-      indicators,
-      vix,
+      indicators, vix,
       volume: quote?.volume,
       avgVolume: 80000000,
-      newsContext,
-      calendarWarning,
-      mtf,
-      volumeAnalysis,
-      preMarketContext,
-      preMarket,
-      futures,
-      sectorContext,
-      sectorData,
-      optionsFlowContext,
-      optionsFlow
+      newsContext, calendarWarning,
+      mtf, volumeAnalysis,
+      preMarketContext, preMarket, futures,
+      sectorContext, sectorData
     });
 
     // Auto-scale confidence based on all available context
     const confidenceScore = calcConfidenceScore({
       aiBaseConfidence: signal.confidence,
-      vix,
-      volumeAnalysis,
-      mtf,
-      sectorData,
-      preMarket,
-      futures,
+      vix, volumeAnalysis, mtf, sectorData,
+      preMarket, futures,
       newsImpact: signal.news_impact,
-      calendarWarning,
-      optionsFlow
+      calendarWarning
     });
 
     // Persist signal to DB
@@ -214,8 +186,7 @@ app.post('/api/signal/generate', requireAuth, async (req, res) => {
        mtf?.agreement || null,
        volumeAnalysis?.label || null,
        sectorData?.rotation?.signal || null,
-       optionsFlow?.flowBias || null,
-       optionsFlow?.putCallRatio || null,
+       null, null,  // flow_bias and put_call_ratio now come from frontend
        futures?.bias || null,
        preMarket?.gapType || null,
        signal.news_impact || null]
@@ -237,13 +208,12 @@ app.post('/api/signal/generate', requireAuth, async (req, res) => {
     res.json({
       signalId,
       ...signal,
-      confidence: confidenceScore.adjusted,  // override AI confidence with auto-scaled value
+      confidence: confidenceScore.adjusted,
       confidenceScore,
       indicators,
       volumeAnalysis,
       preMarket,
       futures,
-      optionsFlow,
       sectorData: {
         rotation: sectorData?.rotation,
         leaders:  sectorData?.leaders,
