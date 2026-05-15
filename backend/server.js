@@ -13,10 +13,66 @@ const { runBacktest } = require('./backtest');
 const { getMarketNews, getEconomicCalendar, buildNewsContext } = require('./news');
 const { getSectorData, buildSectorContext } = require('./sectors');
 const { requireAuth } = require('./authMiddleware');
+const { getAccount, getMarketStatus, getPositions, getOrders } = require('./alpaca');
+const { runAutoTrade, monitorPositions } = require('./autoTrader');
 
 const app = express();
 app.use(cors({ origin: process.env.FRONTEND_URL || '*' }));
 app.use(express.json());
+
+// ─── Auto-Trading ─────────────────────────────────────────────────────────────
+app.get('/api/autotrader/account', requireAuth, async (req, res) => {
+  try {
+    const account = await getAccount();
+    res.json(account);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/autotrader/status', requireAuth, async (req, res) => {
+  try {
+    const [account, clock, positions, orders] = await Promise.all([
+      getAccount(), getMarketStatus(), getPositions(), getOrders('open', 10)
+    ]);
+    const { rows: recentTrades } = await db.query(
+      `SELECT * FROM auto_trades ORDER BY created_at DESC LIMIT 20`
+    );
+    const { rows: recentScans } = await db.query(
+      `SELECT * FROM auto_trade_scans ORDER BY scanned_at DESC LIMIT 50`
+    );
+    const { rows: [perf] } = await db.query(
+      `SELECT * FROM auto_trade_performance`
+    );
+    res.json({ account, clock, positions, orders, recentTrades, recentScans, performance: perf });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/autotrader/run-now', requireAuth, async (req, res) => {
+  try {
+    // Manual trigger — runs the auto-trader immediately
+    runAutoTrade().catch(err => console.error('Manual run error:', err.message));
+    res.json({ message: 'Auto-trader triggered — check status in a few seconds' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/autotrader/trades', requireAuth, async (req, res) => {
+  try {
+    const { rows } = await db.query(
+      `SELECT at.*, s.reasoning, s.rsi, s.macd, s.vix
+       FROM auto_trades at
+       LEFT JOIN signals s ON s.id = at.signal_id
+       ORDER BY at.created_at DESC LIMIT 100`
+    );
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
 // ─── Health check ────────────────────────────────────────────────────────────
 app.get('/health', (_, res) => res.json({ status: 'ok', time: new Date().toISOString() }));
@@ -568,8 +624,19 @@ cron.schedule('*/5 9-16 * * 1-5', async () => {
     );
     console.log(`[${new Date().toISOString()}] Recorded SPY: $${quote.price}`);
   } catch (err) {
-    console.error('Cron error:', err.message);
+    console.error('Price cron error:', err.message);
   }
+}, { timezone: 'America/New_York' });
+
+// ─── Cron: auto-trade scan every 15 minutes during market hours ───────────────
+cron.schedule('*/15 9-16 * * 1-5', async () => {
+  console.log(`[${new Date().toISOString()}] Running auto-trade scan...`);
+  await runAutoTrade();
+}, { timezone: 'America/New_York' });
+
+// ─── Cron: monitor open positions every 5 minutes during market hours ─────────
+cron.schedule('*/5 9-16 * * 1-5', async () => {
+  await monitorPositions();
 }, { timezone: 'America/New_York' });
 
 // ─── Start ───────────────────────────────────────────────────────────────────

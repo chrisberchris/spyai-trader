@@ -2,8 +2,8 @@ const Anthropic = require('@anthropic-ai/sdk');
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
-// Retry helper — retries on 529 overloaded or 529-like errors
-async function callWithRetry(fn, retries = 3, delayMs = 2000) {
+// Retry helper — retries on 529 overloaded with exponential backoff
+async function callWithRetry(fn, retries = 5, delayMs = 3000) {
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {
       return await fn();
@@ -12,7 +12,7 @@ async function callWithRetry(fn, retries = 3, delayMs = 2000) {
         || err?.message?.includes('overloaded')
         || err?.message?.includes('529');
       if (isOverloaded && attempt < retries) {
-        const wait = delayMs * attempt; // 2s, 4s, 6s
+        const wait = delayMs * attempt; // 3s, 6s, 9s, 12s
         console.log(`Anthropic overloaded — retrying in ${wait}ms (attempt ${attempt}/${retries})`);
         await new Promise(r => setTimeout(r, wait));
         continue;
@@ -139,7 +139,7 @@ Return ONLY a valid JSON object, no markdown:
 
   const message = await callWithRetry(() =>
     client.messages.create({
-      model: 'claude-opus-4-5',
+      model: 'claude-sonnet-4-5',
       max_tokens: 1600,
       messages: [{ role: 'user', content: prompt }]
     })

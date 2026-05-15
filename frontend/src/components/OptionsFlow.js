@@ -1,5 +1,4 @@
 import { useState, useEffect, useCallback } from 'react';
-import { market } from '../lib/api';
 
 const FLOW_STYLES = {
   BULLISH:       { color: '#22c55e', bg: 'rgba(34,197,94,0.08)',   border: 'rgba(34,197,94,0.3)',   icon: '▲▲', label: 'Bullish Flow'       },
@@ -8,6 +7,114 @@ const FLOW_STYLES = {
   MILD_BEARISH:  { color: '#f59e0b', bg: 'rgba(245,158,11,0.06)',  border: 'rgba(245,158,11,0.25)', icon: '▼',  label: 'Mild Bearish Flow'  },
   BEARISH:       { color: '#ef4444', bg: 'rgba(239,68,68,0.08)',   border: 'rgba(239,68,68,0.3)',   icon: '▼▼', label: 'Bearish Flow'       },
 };
+
+const UNUSUAL_VOLUME_RATIO = 3.0;
+const UNUSUAL_OI_MIN       = 500;
+const UNUSUAL_VOLUME_MIN   = 100;
+
+// Fetch options chain directly from browser — avoids server-side 401 blocks
+async function fetchOptionsFlow(symbol = 'SPY') {
+  // Step 1: get expiry dates
+  const base = await fetch(
+    `https://query1.finance.yahoo.com/v7/finance/options/${symbol}`,
+    { headers: { 'Accept': 'application/json' } }
+  ).then(r => r.json());
+
+  const result    = base?.optionChain?.result?.[0];
+  if (!result) return null;
+
+  const spotPrice = result.quote?.regularMarketPrice || 0;
+  const expDates  = (result.expirationDates || []).slice(0, 4);
+
+  // Step 2: fetch each expiry
+  const chains = await Promise.allSettled(
+    expDates.map(exp =>
+      fetch(
+        `https://query1.finance.yahoo.com/v7/finance/options/${symbol}?date=${exp}`,
+        { headers: { 'Accept': 'application/json' } }
+      ).then(r => r.json())
+    )
+  );
+
+  const allCalls = [], allPuts = [];
+  for (const c of chains) {
+    if (c.status !== 'fulfilled') continue;
+    const chain = c.value?.optionChain?.result?.[0]?.options?.[0];
+    if (!chain) continue;
+    allCalls.push(...(chain.calls || []));
+    allPuts.push(...(chain.puts   || []));
+  }
+
+  function score(contracts, type) {
+    return contracts
+      .filter(c => (c.openInterest || 0) >= UNUSUAL_OI_MIN && (c.volume || 0) >= UNUSUAL_VOLUME_MIN)
+      .map(c => {
+        const volToOI   = c.openInterest > 0 ? (c.volume || 0) / c.openInterest : 0;
+        const daysToExp = c.expiration
+          ? Math.max(0, Math.round((c.expiration * 1000 - Date.now()) / 86400000))
+          : null;
+        const sc = (volToOI >= UNUSUAL_VOLUME_RATIO ? volToOI * 2 : 0)
+          + (c.volume || 0) / 1000
+          + (c.openInterest || 0) / 5000;
+        return {
+          type, strike: c.strike,
+          expiry: daysToExp != null ? `${daysToExp}d` : '—',
+          expiryDate: c.expiration ? new Date(c.expiration * 1000).toISOString().split('T')[0] : null,
+          volume: c.volume || 0, openInterest: c.openInterest || 0,
+          volToOI: parseFloat(volToOI.toFixed(2)),
+          impliedVol: c.impliedVolatility ? parseFloat((c.impliedVolatility * 100).toFixed(1)) : null,
+          lastPrice: c.lastPrice || 0,
+          inTheMoney: c.inTheMoney || false,
+          score: parseFloat(sc.toFixed(2)),
+          unusual: volToOI >= UNUSUAL_VOLUME_RATIO,
+        };
+      })
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 30);
+  }
+
+  const scoredCalls = score(allCalls, 'CALL');
+  const scoredPuts  = score(allPuts,  'PUT');
+  const unusualCalls = scoredCalls.filter(c => c.unusual).slice(0, 10);
+  const unusualPuts  = scoredPuts.filter(c => c.unusual).slice(0, 10);
+
+  const totalCallVol = allCalls.reduce((s, c) => s + (c.volume || 0), 0);
+  const totalPutVol  = allPuts.reduce((s, c)  => s + (c.volume || 0), 0);
+  const totalCallOI  = allCalls.reduce((s, c) => s + (c.openInterest || 0), 0);
+  const totalPutOI   = allPuts.reduce((s, c)  => s + (c.openInterest || 0), 0);
+  const putCallRatio = totalCallVol > 0
+    ? parseFloat((totalPutVol / totalCallVol).toFixed(2)) : null;
+  const putCallOIRatio = totalCallOI > 0
+    ? parseFloat((totalPutOI / totalCallOI).toFixed(2)) : null;
+
+  let flowBias = 'NEUTRAL';
+  if (putCallRatio !== null) {
+    if      (putCallRatio > 1.5) flowBias = 'BEARISH';
+    else if (putCallRatio > 1.2) flowBias = 'MILD_BEARISH';
+    else if (putCallRatio < 0.7) flowBias = 'BULLISH';
+    else if (putCallRatio < 0.9) flowBias = 'MILD_BULLISH';
+  }
+
+  let unusualSummary = 'No unusual options activity detected.';
+  if (unusualCalls.length && unusualPuts.length)
+    unusualSummary = 'Unusual activity on both calls and puts — mixed institutional positioning.';
+  else if (unusualCalls.length)
+    unusualSummary = `Unusual call buying — ${unusualCalls.length} contracts with vol/OI above ${UNUSUAL_VOLUME_RATIO}x.`;
+  else if (unusualPuts.length)
+    unusualSummary = `Unusual put buying — ${unusualPuts.length} contracts with vol/OI above ${UNUSUAL_VOLUME_RATIO}x.`;
+
+  return {
+    spotPrice, putCallRatio, putCallOIRatio,
+    totalCallVol, totalPutVol, totalCallOI, totalPutOI,
+    flowBias, unusualCalls, unusualPuts,
+    topCalls: scoredCalls.slice(0, 5),
+    topPuts:  scoredPuts.slice(0, 5),
+    unusualSummary,
+    hasUnusualActivity: unusualCalls.length > 0 || unusualPuts.length > 0,
+    source: 'yahoo-browser',
+    fetchedAt: new Date().toISOString()
+  };
+}
 
 function fmt(n) {
   if (n == null) return '—';
@@ -48,9 +155,8 @@ export default function OptionsFlow({ signalOptionsFlow }) {
 
   const fetchData = useCallback(async () => {
     try {
-      const res = await market.optionsFlow();
-      setData(res);
-      setLastFetch(new Date());
+      const res = await fetchOptionsFlow('SPY');
+      if (res) { setData(res); setLastFetch(new Date()); }
     } catch (err) {
       console.error('Options flow fetch failed:', err.message);
     } finally {
