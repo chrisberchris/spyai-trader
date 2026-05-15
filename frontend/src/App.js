@@ -208,7 +208,7 @@ export default function App() {
       </nav>
 
       <footer className="footer">
-        ⚠ For educational purposes only. Not financial advice. Options trading involves substantial risk of loss. v2.0
+        ⚠ For educational purposes only. Not financial advice. Options trading involves substantial risk of loss.
       </footer>
     </div>
   );
