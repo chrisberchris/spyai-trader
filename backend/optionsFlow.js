@@ -1,21 +1,58 @@
 const axios = require('axios');
 
 // Thresholds for "unusual" activity
-const UNUSUAL_VOLUME_RATIO  = 3.0;   // volume must be 3x open interest to flag
-const UNUSUAL_OI_MIN        = 500;   // minimum open interest to consider
-const UNUSUAL_VOLUME_MIN    = 100;   // minimum volume to consider
-const MAX_CONTRACTS         = 30;    // top N contracts to return
+const UNUSUAL_VOLUME_RATIO  = 3.0;
+const UNUSUAL_OI_MIN        = 500;
+const UNUSUAL_VOLUME_MIN    = 100;
+const MAX_CONTRACTS         = 30;
+
+// Full browser-like headers — Yahoo blocks server requests without these
+const YAHOO_HEADERS = {
+  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+  'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+  'Accept-Language': 'en-US,en;q=0.9',
+  'Accept-Encoding': 'gzip, deflate, br',
+  'Referer': 'https://finance.yahoo.com/',
+  'Origin': 'https://finance.yahoo.com',
+  'Sec-Fetch-Dest': 'empty',
+  'Sec-Fetch-Mode': 'cors',
+  'Sec-Fetch-Site': 'same-site',
+  'Cache-Control': 'no-cache',
+  'Connection': 'keep-alive',
+};
+
+// Retry helper — retries once on 401/429 with a short delay
+async function yahooFetch(url, params, retries = 2) {
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    try {
+      const res = await axios.get(url, {
+        params,
+        headers: YAHOO_HEADERS,
+        timeout: 10000,
+      });
+      return res;
+    } catch (err) {
+      const status = err.response?.status;
+      if ((status === 401 || status === 429) && attempt < retries) {
+        // Wait 1s then try alternate Yahoo endpoint
+        await new Promise(r => setTimeout(r, 1000));
+        // Toggle between query1 and query2 on retry
+        url = url.includes('query2')
+          ? url.replace('query2', 'query1')
+          : url.replace('query1', 'query2');
+        continue;
+      }
+      throw err;
+    }
+  }
+}
 
 async function getOptionsFlow(symbol = 'SPY') {
   try {
     // Fetch options chain from Yahoo Finance
-    const res = await axios.get(
+    const res = await yahooFetch(
       `https://query2.finance.yahoo.com/v7/finance/options/${symbol}`,
-      {
-        params: { getAllData: true },
-        headers: { 'User-Agent': 'Mozilla/5.0' },
-        timeout: 10000
-      }
+      { getAllData: true }
     );
 
     const result    = res.data?.optionChain?.result?.[0];
@@ -27,13 +64,9 @@ async function getOptionsFlow(symbol = 'SPY') {
     // Fetch first 4 expiry dates for broader coverage
     const expiryResults = await Promise.allSettled(
       expDates.slice(0, 4).map(exp =>
-        axios.get(
+        yahooFetch(
           `https://query2.finance.yahoo.com/v7/finance/options/${symbol}`,
-          {
-            params: { date: exp },
-            headers: { 'User-Agent': 'Mozilla/5.0' },
-            timeout: 8000
-          }
+          { date: exp }
         )
       )
     );
