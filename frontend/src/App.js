@@ -15,7 +15,7 @@ import './App.css';
 
 const TABS = [
   { id: 'dashboard',   label: 'Signal',      icon: '◈' },
-  { id: 'autotrader',  label: 'Auto-Trader', icon: '⚡'},
+  { id: 'autotrader',  label: 'Auto-Trader', icon: '⚡' },
   { id: 'analytics',   label: 'Analytics',   icon: '◐' },
   { id: 'options',     label: 'Options',     icon: '◉' },
   { id: 'news',        label: 'News',        icon: '◎' },
@@ -208,7 +208,7 @@ export default function App() {
       </nav>
 
       <footer className="footer">
-        ⚠ For educational purposes only. Not financial advice. Options trading involves substantial risk of loss.
+        ⚠ For educational purposes only. Not financial advice. Options trading involves substantial risk of loss. v2.0
       </footer>
     </div>
   );
