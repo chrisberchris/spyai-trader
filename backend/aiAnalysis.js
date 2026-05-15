@@ -2,6 +2,26 @@ const Anthropic = require('@anthropic-ai/sdk');
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
+// Retry helper — retries on 529 overloaded or 529-like errors
+async function callWithRetry(fn, retries = 3, delayMs = 2000) {
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      const isOverloaded = err?.status === 529
+        || err?.message?.includes('overloaded')
+        || err?.message?.includes('529');
+      if (isOverloaded && attempt < retries) {
+        const wait = delayMs * attempt; // 2s, 4s, 6s
+        console.log(`Anthropic overloaded — retrying in ${wait}ms (attempt ${attempt}/${retries})`);
+        await new Promise(r => setTimeout(r, wait));
+        continue;
+      }
+      throw err;
+    }
+  }
+}
+
 async function generateSignal({
   price, indicators, vix, volume, avgVolume,
   newsContext, calendarWarning, mtf, volumeAnalysis,
@@ -117,11 +137,13 @@ Return ONLY a valid JSON object, no markdown:
   "key_levels": { "support": number, "resistance": number }
 }`;
 
-  const message = await client.messages.create({
-    model: 'claude-opus-4-5',
-    max_tokens: 1600,
-    messages: [{ role: 'user', content: prompt }]
-  });
+  const message = await callWithRetry(() =>
+    client.messages.create({
+      model: 'claude-opus-4-5',
+      max_tokens: 1600,
+      messages: [{ role: 'user', content: prompt }]
+    })
+  );
 
   const text = message.content
     .map(b => b.text || '')
