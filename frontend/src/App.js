@@ -15,7 +15,7 @@ import './App.css';
 
 const TABS = [
   { id: 'dashboard',   label: 'Signal',      icon: '◈' },
-  { id: 'autotrader',  label: 'Auto-Trader', icon: '⚡' },
+  { id: 'autotrader',  label: 'Auto-Trader', icon: '⚡'},
   { id: 'analytics',   label: 'Analytics',   icon: '◐' },
   { id: 'options',     label: 'Options',     icon: '◉' },
   { id: 'news',        label: 'News',        icon: '◎' },
