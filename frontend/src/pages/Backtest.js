@@ -11,7 +11,7 @@ const STRATEGIES = [
 
 export default function Backtest() {
   const [strategy, setStrategy] = useState('combo');
-  const [days, setDays] = useState(90);
+  const [days, setDays] = useState(365);
   const [capital, setCapital] = useState(10000);
   const [result, setResult] = useState(null);
   const [history, setHistory] = useState([]);
@@ -61,10 +61,12 @@ export default function Backtest() {
             <label style={{ display: 'block', fontSize: 12, color: 'var(--text2)', marginBottom: 6 }}>Lookback Period</label>
             <select value={days} onChange={e => setDays(e.target.value)}
               style={{ width: '100%', padding: '9px 10px', background: 'var(--bg3)', border: '0.5px solid var(--border2)', borderRadius: 6, color: 'var(--text)', fontSize: 13, fontFamily: 'var(--font)' }}>
-              <option value={30}>30 days</option>
-              <option value={90}>90 days</option>
-              <option value={180}>180 days</option>
+              <option value={90}>3 months</option>
+              <option value={180}>6 months</option>
               <option value={365}>1 year</option>
+              <option value={730}>2 years</option>
+              <option value={1825}>5 years</option>
+              <option value={3650}>10 years (max)</option>
             </select>
           </div>
           <div>

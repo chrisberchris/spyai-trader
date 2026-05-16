@@ -81,36 +81,68 @@ async function getVix() {
   }
 }
 
-async function getHistoricalBars(symbol = 'SPY', days = 90) {
-  const to = new Date().toISOString().split('T')[0];
+async function getHistoricalBars(symbol = 'SPY', days = 220) {
+  const to   = new Date().toISOString().split('T')[0];
   const from = new Date(Date.now() - days * 86400000).toISOString().split('T')[0];
+
+  // For large requests (>2 years) go straight to Yahoo — Polygon free tier only has 2 years
+  if (days > 730) {
+    return await getYahooHistoricalBars(symbol, days);
+  }
+
   try {
-    const res = await axios.get(`${BASE}/v2/aggs/ticker/${symbol}/range/1/day/${from}/${to}`, {
-      params: { adjusted: true, sort: 'asc', limit: 365, apiKey: POLYGON_KEY },
-      timeout: 8000
-    });
-    return res.data.results || [];
+    const res = await axios.get(
+      `${BASE}/v2/aggs/ticker/${symbol}/range/1/day/${from}/${to}`,
+      { params: { adjusted: true, sort: 'asc', limit: 50000, apiKey: POLYGON_KEY }, timeout: 15000 }
+    );
+    const results = res.data.results || [];
+    if (results.length > 0) return results;
+    // If Polygon returns empty, fall through to Yahoo
+    return await getYahooHistoricalBars(symbol, days);
   } catch {
-    // Yahoo fallback
-    try {
-      const res = await axios.get(
-        `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}`,
-        { params: { interval: '1d', range: days <= 30 ? '1mo' : days <= 90 ? '3mo' : days <= 180 ? '6mo' : '1y' }, timeout: 8000 }
-      );
-      const r = res.data.chart.result[0];
-      const timestamps = r.timestamp;
-      const quotes = r.indicators.quote[0];
-      return timestamps.map((t, i) => ({
+    return await getYahooHistoricalBars(symbol, days);
+  }
+}
+
+// Dedicated Yahoo Finance historical bars — supports up to 10 years
+async function getYahooHistoricalBars(symbol = 'SPY', days = 220) {
+  // Map days to Yahoo range parameter
+  let range;
+  if      (days <= 30)   range = '1mo';
+  else if (days <= 90)   range = '3mo';
+  else if (days <= 180)  range = '6mo';
+  else if (days <= 365)  range = '1y';
+  else if (days <= 730)  range = '2y';
+  else if (days <= 1825) range = '5y';
+  else                   range = '10y';
+
+  try {
+    const res = await axios.get(
+      `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}`,
+      {
+        params: { interval: '1d', range, includeAdjustedClose: true },
+        headers: { 'User-Agent': 'Mozilla/5.0' },
+        timeout: 15000
+      }
+    );
+    const r         = res.data.chart.result[0];
+    const timestamps = r.timestamp || [];
+    const quotes     = r.indicators.quote[0];
+    const adjClose   = r.indicators.adjclose?.[0]?.adjclose;
+
+    return timestamps
+      .map((t, i) => ({
         t: t * 1000,
         o: quotes.open[i],
         h: quotes.high[i],
         l: quotes.low[i],
-        c: quotes.close[i],
+        c: adjClose?.[i] || quotes.close[i], // prefer adjusted close
         v: quotes.volume[i]
-      })).filter(b => b.c !== null);
-    } catch {
-      return [];
-    }
+      }))
+      .filter(b => b.c !== null && b.c !== undefined);
+  } catch (err) {
+    console.error(`Yahoo historical bars error for ${symbol}:`, err.message);
+    return [];
   }
 }
 
@@ -284,6 +316,7 @@ function buildPreMarketContext(preMarket, futures) {
 }
 
 module.exports = {
-  getSpyQuote, getSpySnapshot, getVix, getHistoricalBars,
+  getSpyQuote, getSpySnapshot, getVix, getHistoricalBars, getYahooHistoricalBars,
   getIntradayBars, getPreMarketData, getFuturesData, buildPreMarketContext
 };
+

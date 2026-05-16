@@ -4,7 +4,7 @@ const cors = require('cors');
 const cron = require('node-cron');
 const db = require('./db');
 const {
-  getSpySnapshot, getVix, getHistoricalBars,
+  getSpySnapshot, getVix, getHistoricalBars, getYahooHistoricalBars,
   getIntradayBars, getPreMarketData, getFuturesData, buildPreMarketContext
 } = require('./marketData');
 const { calcAllIndicators, calcMultiTimeframe, calcVolumeAnalysis, calcConfidenceScore } = require('./indicators');
@@ -564,8 +564,14 @@ app.get('/api/trades/performance', requireAuth, async (req, res) => {
 // ─── Backtest ─────────────────────────────────────────────────────────────────
 app.post('/api/backtest/run', requireAuth, async (req, res) => {
   try {
-    const { strategy = 'combo', period_days = 90, starting_capital = 10000 } = req.body;
-    const bars = await getHistoricalBars('SPY', period_days + 30);
+    const { strategy = 'combo', period_days = 365, starting_capital = 10000 } = req.body;
+
+    // For long periods use Yahoo directly — much faster and more data
+    const fetchDays = parseInt(period_days) + 60; // extra buffer for indicator warmup
+    const bars = fetchDays > 730
+      ? await getYahooHistoricalBars('SPY', fetchDays)
+      : await getHistoricalBars('SPY', fetchDays);
+
     if (bars.length < 60) return res.status(503).json({ error: 'Not enough historical data' });
 
     const result = runBacktest({ bars, strategy, startingCapital: starting_capital });
@@ -579,7 +585,7 @@ app.post('/api/backtest/run', requireAuth, async (req, res) => {
        JSON.stringify(result.equityCurve), JSON.stringify(result.trades), req.userId]
     );
 
-    res.json(result);
+    res.json({ ...result, barsUsed: bars.length });
   } catch (err) {
     console.error('Backtest error:', err.message);
     res.status(500).json({ error: err.message });
