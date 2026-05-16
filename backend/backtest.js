@@ -121,3 +121,4 @@ function runBacktest({ bars, strategy, startingCapital }) {
 }
 
 module.exports = { runBacktest };
+
